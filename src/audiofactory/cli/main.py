@@ -129,9 +129,26 @@ def status(slug: str):
 
 
 @app.command()
-def review(slug: str):
-    """Lista os chunks que precisam de revisão humana."""
+def review(slug: str,
+           aprovar: str = typer.Option(None, "--aprovar", metavar="CHUNK_ID",
+                                       help="aceita o chunk como está, depois de ouvir"),
+           regerar: str = typer.Option(None, "--regerar", metavar="CHUNK_ID",
+                                       help="devolve o chunk à fila, para outra seed")):
+    """Lista — ou resolve — os chunks que precisam de revisão humana."""
     db = Store(_proj(slug) / "state.db")
+
+    if aprovar:
+        if db.approve(aprovar):
+            console.print(f"[green]aprovado[/] {aprovar} — `build` já pode montar")
+        else:
+            console.print(f"[red]não está em needs_review:[/] {aprovar}")
+            raise typer.Exit(1)
+        return
+    if regerar:
+        db.requeue(regerar)
+        console.print(f"[green]de volta à fila[/] {regerar} — rode `run` de novo")
+        return
+
     rows = db.needs_review()
     if not rows:
         console.print("[green]nenhum chunk pendente de revisão[/]")
@@ -141,6 +158,8 @@ def review(slug: str):
         console.print(f"  esperado: {r['text']}")
         console.print(f"  ouvido  : {r['transcript']}")
         console.print(f"  wav     : {r['wav_path']}")
+    console.print(f"\n[dim]ouça o wav e decida: `review {slug} --aprovar <chunk_id>` "
+                  f"ou `--regerar <chunk_id>`[/]")
 
 
 @app.command()

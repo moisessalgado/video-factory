@@ -131,6 +131,19 @@ class Store:
                       "cer=?, transcript=?, updated_at=CURRENT_TIMESTAMP WHERE chunk_id=?",
                       (error, wav_path, cer, transcript, chunk_id))
 
+    def approve(self, chunk_id: str) -> int:
+        """Aprova um chunk que o QA reprovou, depois de um humano ouvir.
+
+        Existe porque o QA automatico tem limite conhecido: nome proprio incomum
+        derruba o CER pela grafia do ASR, nao pela pronuncia. Sem esta porta, um
+        trecho de 2 s trava a montagem de um capitulo inteiro.
+        """
+        with self.tx() as c:
+            return c.execute(
+                "UPDATE chunks SET state='ok', error='aprovado por revisão humana', "
+                "updated_at=CURRENT_TIMESTAMP WHERE chunk_id=? AND state='needs_review'",
+                (chunk_id,)).rowcount
+
     def requeue(self, chunk_id: str) -> None:
         with self.tx() as c:
             c.execute("UPDATE chunks SET state='pending', attempts=0 WHERE chunk_id=?",
