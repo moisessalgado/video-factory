@@ -89,10 +89,32 @@ def _expand_lexicon(text: str, lexicon: dict[str, str]) -> tuple[str, list]:
     return text, applied
 
 
+def detect_ambiguous(text: str) -> list[AmbiguousSpan]:
+    """Acha spans ambiguos no texto CRU, antes de qualquer substituicao.
+
+    A ordem importa: se as regras rodarem primeiro, os offsets viram lixo (o texto
+    encolheu ou cresceu) e a Camada 2 aplicaria a expansao no lugar errado. Por isso
+    a Camada 2 opera sobre o texto original, e as regras rodam depois.
+    """
+    spans: list[AmbiguousSpan] = []
+    for m in re.finditer(r"\b\d{4}\b", text):
+        spans.append(AmbiguousSpan(m.start(), m.end(), m.group(0),
+                                   "numero de 4 digitos: ano ou quantidade?"))
+    for m in re.finditer(r"\b([A-ZÁ-Ú][a-zá-ú]+)\s+([IVXL]{1,5})\b", text):
+        # "século XVII" ja e resolvido por regra; so nomes proprios sao ambiguos
+        if m.group(1).lower().startswith("s\u00e9culo"):
+            continue
+        spans.append(AmbiguousSpan(m.start(2), m.end(2), m.group(2),
+                                   "romano apos nome proprio: ordinal contextual"))
+    return sorted(spans, key=lambda s: s.start)
+
+
 def normalize(text: str, lexicon: dict[str, str] | None = None) -> NormalizationResult:
     """Normaliza um paragrafo para narracao. Nao reescreve prosa."""
     applied: list[tuple[str, str]] = []
-    ambiguous: list[AmbiguousSpan] = []
+    # Ambiguidade e detectada no texto de ENTRADA -- depois das regras os offsets
+    # nao valeriam mais nada.
+    ambiguous = detect_ambiguous(text)
 
     if lexicon:
         text, lex_applied = _expand_lexicon(text, lexicon)
@@ -194,15 +216,7 @@ def normalize(text: str, lexicon: dict[str, str] | None = None) -> Normalization
         applied.append((raw, novo))
         return novo
 
-    for m in re.finditer(r"\b\d{4}\b", text):
-        ambiguous.append(AmbiguousSpan(m.start(), m.end(), m.group(0),
-                                       "numero de 4 digitos: ano ou quantidade?"))
     text = re.sub(r"\b[\d.,]*\d\b", _numero, text)
-
-    # Numerais romanos isolados apos substantivo (Dom Pedro II) -> ambiguo
-    for m in re.finditer(r"\b([A-ZÁ-Ú][a-zá-ú]+)\s+([IVXL]{1,5})\b", text):
-        ambiguous.append(AmbiguousSpan(m.start(2), m.end(2), m.group(2),
-                                       "romano apos nome proprio: ordinal contextual"))
 
     text = re.sub(r"\s{2,}", " ", text).strip()
     return NormalizationResult(text=text, ambiguous=ambiguous, applied=applied)

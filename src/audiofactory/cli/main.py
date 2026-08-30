@@ -44,11 +44,14 @@ def new(slug: str, fonte: Path = typer.Option(..., "--from"),
 
 
 @app.command()
-def script(slug: str, max_chars: int = 300):
+def script(slug: str, max_chars: int = 300,
+           llm: bool = typer.Option(False, "--llm/--no-llm",
+                                    help="Camada 2: resolve spans ambíguos via Ollama"),
+           modelo: str = typer.Option(None, help="modelo do Ollama (padrão: gemma4:12b)")):
     """Ingere, normaliza e gera script.json + diff.md."""
     p = _proj(slug)
     proj_mod.ingerir(p)
-    s = proj_mod.montar_script(p, _lexicon(), max_chars)
+    s = proj_mod.montar_script(p, _lexicon(), max_chars, usar_llm=llm, modelo_llm=modelo)
     n_seg = sum(len(c.segments) for c in s.chapters)
     console.print(f"[green]script.json[/] {len(s.chapters)} capítulos, {n_seg} segmentos, "
                   f"{s.total_chars} caracteres")
