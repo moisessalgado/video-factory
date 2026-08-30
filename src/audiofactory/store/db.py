@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     wav_path    TEXT,
     duration_s  REAL,
     cer         REAL,
+    speaker_sim REAL,
     transcript  TEXT,
     error       TEXT,
     updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
@@ -53,6 +54,10 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        # migracao para bancos criados antes da checagem de identidade de voz
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(chunks)")}
+        if "speaker_sim" not in cols:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN speaker_sim REAL")
         self.conn.commit()
 
     @contextmanager
@@ -102,12 +107,13 @@ class Store:
                       "updated_at=CURRENT_TIMESTAMP WHERE chunk_id=?", (chunk_id,))
 
     def finish_ok(self, chunk_id: str, wav_path: str, duration_s: float,
-                  cer: float | None, transcript: str | None, seed: int) -> None:
+                  cer: float | None, transcript: str | None, seed: int,
+                  speaker_sim: float | None = None) -> None:
         with self.tx() as c:
             c.execute("UPDATE chunks SET state='ok', wav_path=?, duration_s=?, cer=?, "
-                      "transcript=?, seed=?, error=NULL, updated_at=CURRENT_TIMESTAMP "
-                      "WHERE chunk_id=?",
-                      (wav_path, duration_s, cer, transcript, seed, chunk_id))
+                      "speaker_sim=?, transcript=?, seed=?, error=NULL, "
+                      "updated_at=CURRENT_TIMESTAMP WHERE chunk_id=?",
+                      (wav_path, duration_s, cer, speaker_sim, transcript, seed, chunk_id))
 
     def finish_review(self, chunk_id: str, error: str, wav_path: str | None = None,
                       cer: float | None = None, transcript: str | None = None) -> None:
@@ -135,6 +141,9 @@ class Store:
         cer = self.conn.execute(
             "SELECT AVG(cer) a FROM chunks WHERE cer IS NOT NULL").fetchone()["a"]
         out["cer_medio"] = cer
+        r = self.conn.execute("SELECT AVG(speaker_sim) a, MIN(speaker_sim) m FROM chunks "
+                              "WHERE speaker_sim IS NOT NULL").fetchone()
+        out["speaker_medio"], out["speaker_min"] = r["a"], r["m"]
         return out
 
     def chapter_chunks(self, chapter: int) -> list[sqlite3.Row]:

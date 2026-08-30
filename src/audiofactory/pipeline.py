@@ -33,6 +33,7 @@ class Runner:
         self.voice_ref = voice_ref
         self.seed_base = seed_base
         self.store = Store(projeto / "state.db")
+        self.speaker: object | None = None
         self.chunks_dir = projeto / "audio" / "chunks"
         self.logs_dir = projeto / "logs"
         for d in (self.chunks_dir, self.logs_dir, projeto / "audio" / "chapters",
@@ -56,6 +57,11 @@ class Runner:
         self.engine.load()
         if self.voice_ref:
             self.engine.set_voice(self.voice_ref)
+            ve = getattr(self.engine.model, "ve", None)
+            if ve is not None:
+                from .qa.speaker import SpeakerCheck
+
+                self.speaker = SpeakerCheck(ve, self.voice_ref)
         if self.verifier:
             self.verifier.load()
 
@@ -77,9 +83,19 @@ class Runner:
             t_audio += dur
             t_gen += gen_s
 
+            sim = None
+            if self.speaker is not None:
+                identidade_ok, sim = self.speaker.ok(decisao.melhor.audio,
+                                                     self.engine.sample_rate)
+                if decisao.aceito and not identidade_ok:
+                    decisao.aceito = False
+                    decisao.motivo = (f"voz divergente da referência "
+                                      f"(similaridade {sim:.3f})")
+
             if decisao.aceito:
                 self.store.finish_ok(cid, str(wav_path), dur, decisao.melhor.qa.cer,
-                                     decisao.melhor.qa.transcript, decisao.melhor.seed)
+                                     decisao.melhor.qa.transcript, decisao.melhor.seed,
+                                     speaker_sim=sim)
                 n_ok += 1
             else:
                 self.store.finish_review(cid, decisao.motivo, str(wav_path),
@@ -89,7 +105,9 @@ class Runner:
 
             log.write(json.dumps({
                 "chunk_id": cid, "aceito": decisao.aceito, "tentativas": tentativas,
-                "cer": decisao.melhor.qa.cer, "duracao_s": round(dur, 2),
+                "cer": decisao.melhor.qa.cer,
+                "speaker_sim": round(sim, 4) if sim is not None else None,
+                "duracao_s": round(dur, 2),
                 "gen_s": round(gen_s, 2), "motivo": decisao.motivo,
                 "texto": texto,
             }, ensure_ascii=False) + "\n")

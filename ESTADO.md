@@ -65,7 +65,10 @@ Benchmark real (`bench/fase0_bench.py`, dados em `bench/out/bench.json`), RTX 50
 | Camada 2 do LLM + validador | ✅ pronta, testada com gemma4:12b real | `src/audiofactory/narration/llm.py` |
 | Subcomando `iam voice` | ✅ pronto | `ai-workspace/ai-stack/bin/iam` (`cmd_voice`) |
 | Registry de vozes (Fase 5) | ✅ código pronto e validado | `src/audiofactory/voices.py` |
-| **Gravar a voz do Moises** | ⬜ **PRÓXIMO — depende do usuário** | `iam voice voice record` |
+| Voz template do canal | ✅ `narrador-v1` registrada e em uso | `voices/narrador-v1/` |
+| Motor Kokoro (rascunho/template) | ✅ instalado e funcionando | `iam voice voice template` |
+| Checagem de identidade da voz | ✅ pronta e validada contra impostores | `src/audiofactory/qa/speaker.py` |
+| Gravar a voz do Moises | ⏸️ adiado — melhoria de autenticidade, não bloqueio | `iam voice voice record` |
 
 ## Detalhes que já foram decididos e não devem ser re-litigados
 
@@ -122,27 +125,45 @@ O chunk que eu havia atribuído a ruído do ASR era defeito real do genérico: e
 "Ou que os homens retornaram" onde o pack produz "Poucos homens retornaram". O custo é ~5% de
 RTF. Padrão do motor: `use_ptbr_pack=True`; `--no-ptbr-pack` desliga.
 
-## PRÓXIMO PASSO — gravar a voz de referência (Fase 5)
+## Voz do canal — `narrador-v1` (template, em uso)
 
-Único item que depende do usuário. O código já está pronto e validado:
+Decisão do usuário: usar uma voz template por enquanto; a voz própria fica como
+melhoria de autenticidade mais adiante.
 
+A voz em uso é o **Chatterbox clonando uma referência sintetizada pelo Kokoro
+(`pm_alex`, Apache-2.0)**. Escolhida em teste cego entre 5 candidatas. O motivo de não
+usar o Kokoro direto como motor: assim o motor continua sendo o Chatterbox, e trocar
+pela voz real do Moises depois é só registrar outra voz — sem mudar engine, sem
+reprocessar nada além do áudio.
+
+`voices/narrador-v1/` tem `PROVENANCE.md` (voz sintética não tem consentimento a
+colher, mas tem procedência a documentar) e o hash SHA-256 da referência.
+
+**Para trocar pela voz real depois:**
 ```bash
 iam voice voice record                 # instruções + texto de calibração
 iam voice voice new moises-v1 --reference take2.wav
-iam voice voice test moises-v1         # sintetiza a calibração para escuta
+# depois, em cada project.yaml: narrator: moises-v1
 ```
 
-O registry recusa referência curta (<20 s), com clipping, ou adulterada depois do
-registro (hash SHA-256 no `profile.yaml`) — porque nesse caso os conditionals e todo o
-áudio já gerado deixariam de ser reproduzíveis. `CONSENT.md` é obrigatório e gerado a
-partir de um modelo.
+## Identidade da voz — limiar calibrado com medição própria
 
-Depois de registrada, basta `narrator: moises-v1` no `project.yaml`: o `run` resolve a
-referência pelo registry e `set_voice` congela os conditionals uma vez por livro.
+`qa/speaker.py` compara cada chunk com a referência usando o voice encoder do próprio
+Chatterbox. Medido com a `narrador-v1` (6 chunks, 3 capítulos):
+
+| | similaridade |
+|---|---|
+| mesma voz (6 chunks, 3 capítulos) | 0,917 – 0,960 |
+| voz feminina diferente | 0,833 |
+| outra voz masculina (kokoro pm_santa) | 0,823 |
+| voz embutida do Chatterbox | 0,679 |
+
+**Limiar 0,88**, no meio do vão. Um chunk abaixo disso vai para `needs_review` mesmo
+com CER perfeito — o CER garante que o texto está certo, não que a voz é a mesma.
 
 ## Depois disso
 
-1. **Primeiro livro real** de domínio público, ponta a ponta, com a voz própria.
+1. **Primeiro livro real** de domínio público, ponta a ponta, com a `narrador-v1`.
 2. **Fase 6**: 2 workers GPU (sobra VRAM — 3,5 de 16 GB), relatório de QA, `chapters.txt`.
 3. **V2**: música/trilha com ducking no Chapter Builder.
 

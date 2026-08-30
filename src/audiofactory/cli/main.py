@@ -101,6 +101,9 @@ def status(slug: str):
     console.print(t)
     console.print(f"áudio pronto: {s['audio_s']/60:.1f} min · "
                   f"CER médio: {s['cer_medio'] if s['cer_medio'] is None else round(s['cer_medio'],4)}")
+    if s.get("speaker_medio") is not None:
+        console.print(f"identidade da voz: média {s['speaker_medio']:.3f} · "
+                      f"pior chunk {s['speaker_min']:.3f} (limiar 0,88)")
 
 
 @app.command()
@@ -190,6 +193,40 @@ def voice_new(voice_id: str, reference: Path = typer.Option(..., "--reference"),
     console.print("[yellow]voices/ não é versionado — inclua no backup cifrado[/]")
 
 
+@voice_app.command("template")
+def voice_template(voice_id: str = typer.Argument(..., help="id a registrar, ex.: dora-v1"),
+                   kokoro_voice: str = typer.Option("pf_dora",
+                       help="voz do Kokoro: pf_dora, pm_alex, pm_santa"),
+                   segundos: int = typer.Option(16, help="duração da referência")):
+    """Cria uma voz template a partir de uma voz do Kokoro (Apache-2.0).
+
+    Sintetiza uma referência com o Kokoro e a registra como voz de clonagem do
+    Chatterbox: timbre brasileiro, sem trocar de motor quando a voz própria chegar.
+    """
+    import warnings
+
+    import numpy as np
+    import soundfile as sf
+
+    warnings.filterwarnings("ignore")
+    from kokoro import KPipeline
+
+    from ..voices import TEXTO_CALIBRACAO, criar
+
+    with console.status(f"sintetizando referência com {kokoro_voice}…"):
+        pipe = KPipeline(lang_code="p")
+        audio = np.concatenate([g.audio.numpy() for g in pipe(TEXTO_CALIBRACAO,
+                                                             voice=kokoro_voice)])
+    tmp = proj_mod.RAIZ / "cache" / f"ref-{voice_id}.wav"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(tmp), audio, 24000)
+    v = criar(proj_mod.RAIZ, voice_id, tmp,
+              template_de=f"Kokoro-82M (Apache-2.0), voz {kokoro_voice}")
+    console.print(f"[green]voz template registrada[/] {v.dir}")
+    console.print(f"procedência: {v.dir/'PROVENANCE.md'}")
+    console.print(f"teste: [bold]iam voice voice test {voice_id}[/]")
+
+
 @voice_app.command("list")
 def voice_list():
     """Lista as vozes registradas."""
@@ -199,8 +236,14 @@ def voice_list():
     if not vozes:
         console.print("nenhuma voz registrada — use [bold]voice record[/] para começar")
         return
+    import yaml as _yaml
+
     for v in vozes:
-        console.print(f"  {v}")
+        cfg = _yaml.safe_load(
+            (proj_mod.RAIZ / "voices" / v / "profile.yaml").read_text(encoding="utf-8"))
+        tipo = cfg.get("tipo", "pessoa")
+        origem = f" — {cfg['origem']}" if cfg.get("origem") else ""
+        console.print(f"  [bold]{v}[/] ({tipo}){origem}")
 
 
 @voice_app.command("test")

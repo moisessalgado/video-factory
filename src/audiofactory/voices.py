@@ -51,11 +51,20 @@ def raiz_vozes(raiz: Path) -> Path:
 
 
 def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None = None,
-          params: SynthParams | None = None) -> Voz:
-    """Registra uma voz a partir de um WAV de referencia."""
+          params: SynthParams | None = None, template_de: str | None = None) -> Voz:
+    """Registra uma voz a partir de um WAV de referencia.
+
+    `template_de` marca uma voz SINTETICA (ex.: amostra do Kokoro usada como
+    referencia). Nesse caso nao existe pessoa para consentir, entao em vez de
+    CONSENT.md grava-se PROVENANCE.md dizendo de onde a voz veio e sob qual licenca
+    -- a exigencia de rastreabilidade continua, muda so a natureza do documento.
+    """
     audio, sr = sf.read(str(referencia), dtype="float32")
     dur = len(audio) / sr
-    if dur < MIN_SEGUNDOS:
+    if template_de and dur < MIN_SEGUNDOS:
+        # voz template vem de TTS: 15s ja bastam e nao ha ganho em exigir mais
+        pass
+    elif dur < MIN_SEGUNDOS:
         raise ValueError(f"referência curta demais: {dur:.1f}s (mínimo {MIN_SEGUNDOS:.0f}s)")
     if dur > MAX_SEGUNDOS:
         raise ValueError(f"referência longa demais: {dur:.1f}s (máximo {MAX_SEGUNDOS:.0f}s)")
@@ -69,12 +78,17 @@ def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None
     destino = d / "reference" / referencia.name
     shutil.copy2(referencia, destino)
 
-    consent = d / "CONSENT.md"
-    if not consent.exists():
-        if consentimento is None:
-            raise ValueError(
-                f"crie {consent} declarando o consentimento antes de registrar a voz")
-        consent.write_text(consentimento, encoding="utf-8")
+    if template_de:
+        proc = d / "PROVENANCE.md"
+        if not proc.exists():
+            proc.write_text(_provenance(voice_id, template_de), encoding="utf-8")
+    else:
+        consent = d / "CONSENT.md"
+        if not consent.exists():
+            if consentimento is None:
+                raise ValueError(
+                    f"crie {consent} declarando o consentimento antes de registrar a voz")
+            consent.write_text(consentimento, encoding="utf-8")
 
     p = params or SynthParams()
     (d / "profile.yaml").write_text(yaml.safe_dump({
@@ -85,6 +99,8 @@ def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None
         "duracao_s": round(dur, 1),
         "sample_rate": sr,
         "pico": round(pico, 3),
+        "tipo": "template" if template_de else "pessoa",
+        "origem": template_de,
         "params": p.model_dump(),
     }, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
@@ -114,6 +130,23 @@ def listar(raiz: Path) -> list[str]:
     if not base.exists():
         return []
     return sorted(d.name for d in base.iterdir() if (d / "profile.yaml").exists())
+
+
+def _provenance(voice_id: str, origem: str) -> str:
+    return f"""# Procedência da voz template — {voice_id}
+
+Data: {date.today().isoformat()}
+
+Esta é uma voz **sintética**, não a voz de uma pessoa. Origem: **{origem}**.
+
+Não há pessoa identificável sendo imitada, portanto não há consentimento a colher.
+O que existe é a licença do modelo de origem, que deve permitir uso comercial —
+ver `LICENSES.md` na raiz do projeto.
+
+Uso pretendido: voz provisória do canal, até a gravação da voz própria do operador.
+As publicações são marcadas como conteúdo sintético, e o áudio gerado mantém o
+watermark neural do Chatterbox (Perth / Resemble AI).
+"""
 
 
 def modelo_consentimento(voice_id: str, quem: str) -> str:
