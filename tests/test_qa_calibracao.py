@@ -80,3 +80,69 @@ def test_mesma_voz_continua_passando_em_qualquer_duracao():
 def test_abaixo_do_minimo_julgavel_a_checagem_nao_opina():
     """Vão de só +0,070 aos 2 s: a checagem não discrimina e não deve palpitar."""
     assert MIN_JULGAVEL_S > 2.0
+
+
+# -- ar morto no meio do chunk ------------------------------------------------
+
+import numpy as np
+
+from audiofactory.qa.policy import Tentativa, escolher
+from audiofactory.qa.verify import SILENCIO_MAX_S, QAResult
+
+
+class ASRFalso:
+    """Verifier com os tempos que o whisper devolveria, sem carregar modelo."""
+
+    def __init__(self, segmentos, texto):
+        self.segmentos, self.texto = segmentos, texto
+
+    def transcribe_com_tempos(self, audio, sr):
+        dur, fim, maior = len(audio) / sr, 0.0, 0.0
+        for ini, f in self.segmentos:
+            maior = max(maior, ini - fim)
+            fim = f
+        return self.texto, max(maior, dur - fim)
+
+
+def _check(segmentos, texto, dur_s=20.9, sr=24000):
+    from audiofactory.qa.verify import Verifier
+
+    v = Verifier()
+    v.transcribe_com_tempos = ASRFalso(segmentos, texto).transcribe_com_tempos
+    audio = np.zeros(int(sr * dur_s), dtype=np.float32)
+    return v.check(audio, sr, texto)
+
+
+TEXTO = ("A busca da felicidade nos prazeres sensuais, que são baixos, vulgares, "
+         "grosseiros, ignóbeis e que não trazem benefício; e a busca da mortificação, "
+         "que é dolorosa, ignóbil e que não traz benefício.")
+
+
+def test_pega_ar_morto_no_meio():
+    """Caso real ouvido pelo operador: 7,2 s de chiado no meio de um chunk cujo
+    CER estava em 0,021 e cuja duração total estava na faixa."""
+    r = _check([(0.0, 12.8), (20.0, 20.8)], TEXTO)
+    assert not r.ok and "ar morto" in r.reason
+
+
+def test_pega_cauda_morta_no_fim():
+    """Outro caso real: fala termina aos 6,0 s num chunk de 10,1 s."""
+    r = _check([(0.0, 6.0)], TEXTO, dur_s=10.1)
+    assert not r.ok and "ar morto" in r.reason
+
+
+def test_pausa_normal_entre_frases_passa():
+    """Maior buraco legítimo medido em 185 chunks aprovados: 2,30 s."""
+    r = _check([(0.0, 6.1), (8.4, 20.8)], TEXTO)
+    assert r.ok, r.reason
+
+
+def test_limite_fica_entre_as_duas_populacoes():
+    assert 2.58 < SILENCIO_MAX_S < 4.06      # p99 legítimo × menor defeito real
+
+
+def test_ar_morto_nunca_e_aceito_pela_melhor_de_n():
+    """Como truncamento: é defeito objetivo, não imprecisão de medição."""
+    qa = QAResult(False, 1.0, "", 20.9, 9.0, "ar morto de 7.2s sem fala - o modelo parou")
+    d = escolher([Tentativa(np.zeros(10, dtype=np.float32), qa, 1, 0.95, True)])
+    assert not d.aceito

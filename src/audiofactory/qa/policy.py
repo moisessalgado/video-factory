@@ -11,8 +11,8 @@ Fase 0), o que impede um limiar apertado unico. Por isso duas faixas:
   aceite < CER <= piso     -> regenera; no fim fica a MELHOR das tentativas
   CER > piso               -> regenera; se nem a melhor passar do piso, needs_review
 
-Falha de duracao (truncamento/loop) nunca e aceita por "melhor das tentativas":
-audio mutilado e defeito objetivo, nao ruido de medicao.
+Falha de duracao (truncamento/loop) e ar morto nunca sao aceitos por "melhor das
+tentativas": audio mutilado e defeito objetivo, nao ruido de medicao.
 
 A identidade da voz entra na MESMA politica: uma tentativa abaixo do limiar de
 similaridade e motivo para regenerar, como um CER alto. Medido: chunks curtos
@@ -85,7 +85,7 @@ def escolher(tentativas: list[Tentativa], cer_aceite: float = CER_ACEITE,
 
 def _falha_de_duracao(qa: QAResult) -> bool:
     return not qa.ok and ("truncado" in qa.reason or "loop" in qa.reason
-                          or "vazio" in qa.reason)
+                          or "vazio" in qa.reason or "ar morto" in qa.reason)
 
 
 def deve_repetir(qa: QAResult, tentativa: int, cer_aceite: float = CER_ACEITE,

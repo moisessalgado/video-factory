@@ -6,10 +6,17 @@ detectou repeticao e FORCOU EOS, ou seja, entregou audio incompleto sem erro.
 Por isso verificamos duas coisas independentes:
 
   1. CONTEUDO  -- re-transcreve com ASR e compara com o texto esperado (CER);
-  2. DURACAO   -- compara a duracao real com a esperada para o numero de caracteres.
+  2. DURACAO   -- compara a duracao real com a esperada para o numero de caracteres;
+  3. AR MORTO  -- procura buracos longos ENTRE os segmentos que o ASR devolve.
 
 A checagem de duracao e a que pega o truncamento: cortar o fim de uma frase muda
 pouco o CER de um texto longo, mas mutila a narracao.
+
+A de ar morto pega um defeito que escapa das outras duas: o modelo diz o texto
+inteiro, para de falar no meio, e continua gerando chiado por segundos. O CER
+fica otimo (o texto esta la) e a duracao total fica dentro da faixa, mas o
+ouvinte escuta um buraco com ruido de fundo. Foi assim que 7,2 s de ar morto
+foram parar num audio ja publicado, e so um ouvido humano notou.
 """
 from __future__ import annotations
 
@@ -41,6 +48,18 @@ FATOR_MIN = 0.6
 FATOR_MAX = 1.8
 
 CER_MAX = 0.05
+
+# Maior buraco tolerado entre segmentos do ASR. Medido em 185 chunks aprovados de
+# dois projetos: mediana 0,68 s, p90 1,34 s, p99 2,58 s, com o maior legitimo em
+# 2,30 s. Os defeitos reais apareceram isolados em 4,06 s e 7,22 s. O limite fica
+# no vao entre as duas populacoes.
+#
+# Usa os tempos dos segmentos, e nao o nivel do audio, porque o ar morto do
+# Chatterbox NAO e silencio: e chiado a -45 dB com picos a -38 dB, so 14 dB
+# abaixo da fala. Qualquer limiar de nivel que o pegue tambem reprova pausa
+# normal. Os tempos do ASR resolvem isso sem limiar de amplitude, e de graca --
+# o ASR ja roda em todo chunk para medir o CER.
+SILENCIO_MAX_S = 3.0
 
 
 def duracao_esperada(texto: str) -> float:
@@ -117,11 +136,26 @@ class Verifier:
                                   cpu_threads=self.cpu_threads)
 
     def transcribe(self, audio: np.ndarray, sample_rate: int) -> str:
+        return self.transcribe_com_tempos(audio, sample_rate)[0]
+
+    def transcribe_com_tempos(self, audio: np.ndarray,
+                              sample_rate: int) -> tuple[str, float]:
+        """Devolve (texto, maior buraco sem fala em segundos).
+
+        O buraco inclui a cauda depois do ultimo segmento: um chunk que para de
+        falar e continua chiando ate o fim tem o defeito no fim, nao no meio.
+        """
+        dur = len(audio) / sample_rate
         if sample_rate != 16000:
             audio = _resample(audio, sample_rate, 16000)
         segments, _ = self.model.transcribe(audio, language=self.language,
                                             beam_size=1, vad_filter=False)
-        return " ".join(s.text for s in segments).strip()
+        partes, fim, maior = [], 0.0, 0.0
+        for s in segments:
+            maior = max(maior, s.start - fim)
+            fim = s.end
+            partes.append(s.text)
+        return " ".join(partes).strip(), max(maior, dur - fim)
 
     def check(self, audio: np.ndarray, sample_rate: int, esperado: str,
               cer_max: float = CER_MAX) -> QAResult:
@@ -142,7 +176,11 @@ class Verifier:
                             f"audio longo demais para o texto ({dur:.1f}s contra "
                             f"{prevista:.1f}s previstos) - loop/arrasto?")
 
-        transcript = self.transcribe(audio, sample_rate)
+        transcript, buraco = self.transcribe_com_tempos(audio, sample_rate)
+        if buraco > SILENCIO_MAX_S:
+            return QAResult(False, 1.0, transcript, dur, cps,
+                            f"ar morto de {buraco:.1f}s sem fala - o modelo parou "
+                            "no meio e continuou gerando ruido")
         cer = char_error_rate(esperado, transcript)
         if cer > cer_max:
             return QAResult(False, cer, transcript, dur, cps,
