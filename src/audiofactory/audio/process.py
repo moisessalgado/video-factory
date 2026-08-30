@@ -82,6 +82,30 @@ def _ffmpeg(args: list[str]) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, check=True)
 
 
+def duracao(path: Path) -> float:
+    return float(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True).stdout.strip())
+
+
+def concatenar(partes: list[Path], destino: Path) -> Path:
+    """Junta os masters num arquivo continuo, sem recodificar.
+
+    Cada capitulo ja saiu do loudnorm no mesmo alvo, entao concatenar nao muda o
+    loudness -- e o `chapters.txt` so faz sentido contra este arquivo unico.
+    """
+    lista = destino.with_suffix(".concat.txt")
+    lista.write_text("".join(f"file '{p.resolve()}'\n" for p in partes),
+                     encoding="utf-8")
+    try:
+        _ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lista),
+                 "-c", "copy", str(destino)])
+    finally:
+        lista.unlink(missing_ok=True)
+    return destino
+
+
 def medir_loudness(path: Path) -> dict:
     """Primeira passada do loudnorm: mede para a segunda passada corrigir com precisao."""
     proc = subprocess.run(
@@ -101,10 +125,7 @@ def masterizar(entrada: Path, saida: Path, sample_rate_saida: int = 48000,
                fade_out_ms: int = 300) -> dict:
     """Cadeia final: high-pass -> loudnorm 2-pass -> limiter -> fades -> resample."""
     m = medir_loudness(entrada)
-    dur = float(subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "csv=p=0", str(entrada)],
-        capture_output=True, text=True, check=True).stdout.strip())
+    dur = duracao(entrada)
 
     loudnorm = (
         f"loudnorm=I={LUFS_ALVO}:TP={TP_ALVO}:LRA={LRA_ALVO}"
@@ -115,14 +136,40 @@ def masterizar(entrada: Path, saida: Path, sample_rate_saida: int = 48000,
     filtros = [
         f"highpass=f={high_pass_hz}",
         loudnorm,
-        "alimiter=limit=-1.0dB:level=disabled",
+        f"alimiter=limit={TP_ALVO}dB:level=disabled",
         f"afade=t=in:st=0:d={fade_in_ms/1000}",
         f"afade=t=out:st={max(0.0, dur - fade_out_ms/1000)}:d={fade_out_ms/1000}",
         f"aresample={sample_rate_saida}",
     ]
     _ffmpeg(["-i", str(entrada), "-af", ",".join(filtros),
              "-c:a", "pcm_s24le", str(saida)])
+    _corrigir_ganho(saida)
     return m
+
+
+# Desvio a partir do qual vale corrigir o ganho do master (dB LUFS).
+TOLERANCIA_LUFS = 0.1
+
+
+def _corrigir_ganho(master: Path, tolerancia: float = TOLERANCIA_LUFS) -> float:
+    """Mede o master e corrige o residuo com ganho linear.
+
+    Motivo medido: quando o ganho necessario estoura o true peak alvo, o `loudnorm`
+    abandona o modo linear e cai no dinamico, e o resultado fica sistematicamente
+    ~0,5 LUFS abaixo do alvo -- fora da tolerancia de +-0,5 do TDD. Corrigir com
+    `volume` e seguro porque ganho linear nao altera a dinamica; o limiter fica
+    depois so como guarda de true peak.
+    """
+    medido = float(medir_loudness(master)["input_i"])
+    delta = LUFS_ALVO - medido
+    if abs(delta) <= tolerancia:
+        return medido
+    tmp = master.with_suffix(".corr.wav")
+    _ffmpeg(["-i", str(master), "-af",
+             f"volume={delta:+.2f}dB,alimiter=limit={TP_ALVO}dB:level=disabled",
+             "-c:a", "pcm_s24le", str(tmp)])
+    tmp.replace(master)
+    return float(medir_loudness(master)["input_i"])
 
 
 def exportar(master: Path, destino: Path, formato: str, metadados: dict | None = None,
