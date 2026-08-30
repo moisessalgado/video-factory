@@ -265,15 +265,79 @@ voice_app = typer.Typer(help="Registry de vozes do canal", no_args_is_help=True)
 app.add_typer(voice_app, name="voice")
 
 
+def _dispositivos_captura() -> list[tuple[str, str]]:
+    """Entradas ALSA disponíveis, como (device, descrição)."""
+    import re
+    import subprocess
+
+    saida = subprocess.run(["arecord", "-l"], capture_output=True, text=True).stdout
+    achados = []
+    for m in re.finditer(r"^card (\d+): (\S+) \[([^\]]+)\], device (\d+): ([^\[]+)",
+                         saida, re.MULTILINE):
+        card, _, desc, dev, nome = m.groups()
+        achados.append((f"hw:{card},{dev}", f"{desc} — {nome.strip()}"))
+    return achados
+
+
+def _mostrar_take(take, titulo: str) -> bool:
+    """Imprime a análise e devolve True se a gravação serve como referência."""
+    t = Table("medida", "valor", "alvo", title=titulo)
+    from ..audio.analise import (CORTE_MIN_HZ, PICO_ALVO_DB, RUIDO_MAX_DB,
+                                 SNR_MIN_DB)
+    t.add_row("duração", f"{take.duracao_s:.1f} s", "20–180 s")
+    t.add_row("taxa/canais", f"{take.sample_rate} Hz · {take.canais}", "48000 Hz · 1")
+    t.add_row("pico", f"{take.pico_db:.1f} dBFS", f"{PICO_ALVO_DB:.0f} dBFS")
+    t.add_row("ruído de fundo", f"{take.ruido_db:.1f} dBFS", f"< {RUIDO_MAX_DB:.0f} dBFS")
+    t.add_row("sinal/ruído", f"{take.snr_db:.1f} dB", f"> {SNR_MIN_DB:.0f} dB")
+    t.add_row("banda útil", f"{take.corte_hz/1000:.1f} kHz", f"> {CORTE_MIN_HZ/1000:.0f} kHz")
+    t.add_row("clipping", f"{take.clip_fracao*100:.3f}%", "0%")
+    console.print(t)
+    for a in take.avisos:
+        console.print(f"[yellow]aviso:[/] {a}")
+    for pr in take.problemas:
+        console.print(f"[red]problema:[/] {pr}")
+    if take.problemas:
+        console.print("\n[red]este take não serve como referência[/] — regrave")
+        return False
+    console.print("\n[green]take aprovado[/] — ouça antes de registrar")
+    return True
+
+
+@voice_app.command("check")
+def voice_check(arquivo: Path):
+    """Mede uma gravação e diz se ela serve como referência."""
+    from ..audio.analise import analisar
+
+    if not _mostrar_take(analisar(arquivo), f"Análise — {arquivo.name}"):
+        raise typer.Exit(1)
+
+
 @voice_app.command("record")
-def voice_record():
-    """Instruções e texto de calibração para gravar a voz de referência."""
+def voice_record(
+        saida: Path = typer.Option(None, "--saida", help="WAV a gravar"),
+        segundos: int = typer.Option(90, help="duração da gravação"),
+        dispositivo: str = typer.Option(None, help="entrada ALSA, ex.: hw:2,0"),
+        listar: bool = typer.Option(False, "--listar", help="só lista as entradas")):
+    """Instruções, texto de calibração e — com --saida — a gravação em si."""
+    import subprocess
+
     from ..voices import TEXTO_CALIBRACAO
+
+    entradas = _dispositivos_captura()
+    if listar:
+        if not entradas:
+            console.print("[red]nenhuma entrada de captura ALSA encontrada[/]")
+            raise typer.Exit(1)
+        for dev, desc in entradas:
+            console.print(f"  [bold]{dev}[/]  {desc}")
+        console.print("\n[yellow]Não use microfone de headset Bluetooth:[/] o perfil "
+                      "HFP corta a banda em 8 kHz e aplica denoise que não se desliga.")
+        return
 
     console.print("[bold]Como gravar a referência[/] (TDD §7.2)\n")
     for linha in [
         "60–90 s de fala contínua, em [bold]tom de narração[/] — não de conversa",
-        "microfone fixo, sala com pouco eco (um closet com roupas funciona bem)",
+        "microfone [bold]com fio[/], fixo, sala com pouco eco (um closet com roupas serve)",
         "WAV 48 kHz / 24-bit mono · [bold]sem[/] compressor, EQ, denoise ou reverb",
         "picos por volta de −6 dBFS: se clipar, o registro é recusado",
         "grave [bold]3 takes[/] e escolha o melhor por teste cego com `voice test`",
@@ -281,7 +345,37 @@ def voice_record():
         console.print(f"  • {linha}")
     console.print("\n[bold]Texto de calibração[/] (fonética variada — leia duas vezes):\n")
     console.print(f"[italic]{TEXTO_CALIBRACAO}[/]\n")
-    console.print("Depois: [bold]iam voice voice new moises-v1 --reference take2.wav[/]")
+
+    if saida is None:
+        console.print("Para gravar aqui: [bold]iam voice voice record --saida take1.wav[/]")
+        console.print("Entradas disponíveis: [bold]iam voice voice record --listar[/]")
+        console.print("Já tem o arquivo? [bold]iam voice voice check take1.wav[/]")
+        return
+
+    dispositivo = dispositivo or (entradas[0][0] if entradas else None)
+    if dispositivo is None:
+        console.print("[red]nenhuma entrada de captura encontrada[/]")
+        raise typer.Exit(1)
+    saida.parent.mkdir(parents=True, exist_ok=True)
+    console.print(f"gravando de [bold]{dispositivo}[/] por {segundos}s em {saida}")
+    with console.status("3…"):
+        subprocess.run(["sleep", "3"])
+    console.print("[bold green]FALE AGORA[/]")
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "alsa", "-ar", "48000", "-ac", "2", "-i", dispositivo,
+         "-t", str(segundos), "-ac", "1", "-c:a", "pcm_s24le", str(saida)],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        console.print(f"[red]falha na gravação:[/] {proc.stderr.strip()[:300]}")
+        raise typer.Exit(1)
+
+    from ..audio.analise import analisar
+
+    console.print()
+    if not _mostrar_take(analisar(saida), f"Análise — {saida.name}"):
+        raise typer.Exit(1)
+    console.print(f"\nRegistre: [bold]iam voice voice new moises-v1 --reference {saida}[/]")
 
 
 @voice_app.command("new")

@@ -69,7 +69,17 @@ def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None
     if dur > MAX_SEGUNDOS:
         raise ValueError(f"referência longa demais: {dur:.1f}s (máximo {MAX_SEGUNDOS:.0f}s)")
     pico = float(abs(audio).max()) if audio.size else 0.0
-    if pico > 0.99:
+
+    # Voz de pessoa passa pela analise completa da gravacao. Voz template nao:
+    # ela vem de um TTS a 24 kHz, entao medir microfone e sala nao faz sentido.
+    if not template_de:
+        from .audio.analise import analisar
+
+        take = analisar(referencia)
+        if take.problemas:
+            raise ValueError("gravação inadequada como referência:\n  - "
+                             + "\n  - ".join(take.problemas))
+    elif pico > 0.99:
         raise ValueError("referência com clipping — regrave com mais headroom (-6 dBFS)")
 
     d = raiz_vozes(raiz) / voice_id
