@@ -1,0 +1,8 @@
+# Léxico de pronúncia (TDD 6.4): grafia -> forma falada.
+# Nomes próprios são dicionário, não trabalho de LLM.
+#
+# Regra desta casa (ESTADO): só entra aqui o que o QA acusou. "Krishnamurti"
+# entrou porque o chunk do rosto do discurso ficou em needs_review com CER 0,222
+# em 3 tentativas — o motor lia a grafia sânscrita como se fosse portuguesa.
+Krishnamurti: crichnamurti
+Jiddu: jidu
