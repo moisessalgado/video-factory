@@ -15,6 +15,7 @@ dependencies = [
     "faster-whisper",
     "ebooklib",
     "beautifulsoup4",
+    "pymupdf",
 ]
 
 [project.scripts]

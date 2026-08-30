@@ -13,13 +13,15 @@ _TITULO_ROMANO = re.compile(r"^\s*([IVXLCDM]{1,7})\s*[-–—.:]?\s*(.{0,60})$")
 
 
 def ler(path: Path) -> str:
-    """Le TXT, MD ou EPUB e devolve texto bruto."""
+    """Le TXT, MD, EPUB ou PDF e devolve texto bruto."""
     suf = path.suffix.lower()
     if suf in (".txt", ".md"):
         return path.read_text(encoding="utf-8", errors="replace")
     if suf == ".epub":
         return _ler_epub(path)
-    raise ValueError(f"formato nao suportado no MVP: {suf}")
+    if suf == ".pdf":
+        return ler_pdf(path)
+    raise ValueError(f"formato nao suportado: {suf}")
 
 
 def _ler_epub(path: Path) -> str:
@@ -35,6 +37,104 @@ def _ler_epub(path: Path) -> str:
         if texto.strip():
             partes.append(texto)
     return "\n\n".join(partes)
+
+
+# Fracao de paginas em que uma linha precisa aparecer para ser cabecalho/rodape.
+# Abaixo disso pode ser texto legitimo repetido (um refrao, um nome de secao).
+_REPETICAO_MIN = 0.30
+# Linhas de borda examinadas em cada ponta da pagina.
+_BORDAS = 2
+
+
+def ler_pdf(path: Path) -> str:
+    """Extrai texto de PDF digital, por blocos, removendo cabecalho e rodape.
+
+    Le por BLOCOS e nao por linhas: num PDF cada linha visual vira uma quebra, e
+    reconstruir paragrafo a partir de pontuacao erra sempre que uma frase termina
+    no meio do paragrafo. O bloco do PyMuPDF ja e, na pratica, o paragrafo.
+
+    PDF escaneado (sem camada de texto) e recusado: OCR esta fora do escopo
+    (TDD 17, "Fora"), e um OCR silencioso entregaria lixo ao TTS.
+    """
+    import pymupdf
+
+    doc = pymupdf.open(str(path))
+    try:
+        paginas = [_blocos_da_pagina(pg) for pg in doc]
+    finally:
+        doc.close()
+
+    if not any(paginas):
+        raise ValueError(
+            f"{path.name}: nenhum texto extraivel — provavelmente um PDF escaneado. "
+            "OCR esta fora do escopo; passe um PDF com camada de texto ou um TXT.")
+
+    descartar = _bordas_repetidas(paginas)
+    partes: list[str] = []
+    for blocos in paginas:
+        for b in blocos:
+            if _chave(b) in descartar:
+                continue
+            partes.append(b)
+    return "\n\n".join(partes)
+
+
+def _blocos_da_pagina(pagina) -> list[str]:
+    """Blocos de texto da pagina, em ordem de leitura, com linhas ja unidas."""
+    out = []
+    for bloco in pagina.get_text("blocks", sort=True):
+        if len(bloco) > 6 and bloco[6] != 0:   # 1 = imagem
+            continue
+        texto = _unir_linhas(bloco[4])
+        if texto:
+            out.append(texto)
+    return out
+
+
+def _unir_linhas(bloco: str) -> str:
+    """Une as linhas visuais de um bloco num paragrafo unico."""
+    linhas = [l.strip() for l in bloco.splitlines() if l.strip()]
+    if not linhas:
+        return ""
+    texto = ""
+    for linha in linhas:
+        if not texto:
+            texto = linha
+        elif texto.endswith("-"):          # palavra quebrada pela margem
+            texto = texto[:-1] + linha
+        else:
+            texto = f"{texto} {linha}"
+    return texto.strip()
+
+
+def _chave(bloco: str) -> str:
+    """Identidade de cabecalho/rodape: sem digitos, para casar 'Pagina 12' com 'Pagina 13'."""
+    return re.sub(r"\d+", "#", bloco.strip().lower())
+
+
+def _bordas_repetidas(paginas: list[list[str]]) -> set[str]:
+    """Blocos curtos que se repetem no topo/rodape da maioria das paginas.
+
+    So olha paginas com corpo suficiente para que "borda" signifique alguma coisa:
+    numa pagina de dois blocos, todo bloco e borda, e o proprio texto do livro
+    seria descartado. Como `_chave` apaga os digitos (para casar "Pagina 12" com
+    "Pagina 13"), sem essa guarda uma pagina esparsa perderia o corpo.
+    """
+    from collections import Counter
+
+    # Toda pagina precisa sobrar pelo menos um bloco no meio: se cabecalho e rodape
+    # cobrissem a pagina inteira, o corpo do livro entraria na conta de repeticao.
+    candidatas = [p for p in paginas if len(p) >= 3]
+    if len(candidatas) < 4:
+        return set()
+    contagem: Counter[str] = Counter()
+    for blocos in candidatas:
+        k = _BORDAS if len(blocos) >= _BORDAS * 2 + 1 else 1
+        bordas = blocos[:k] + blocos[-k:]
+        for b in {_chave(x) for x in bordas if len(x) <= 80}:
+            contagem[b] += 1
+    minimo = max(2, int(len(candidatas) * _REPETICAO_MIN))
+    return {k for k, n in contagem.items() if n >= minimo}
 
 
 def limpar(texto: str) -> str:
