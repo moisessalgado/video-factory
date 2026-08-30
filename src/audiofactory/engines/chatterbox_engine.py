@@ -14,6 +14,44 @@ from ..script.models import SynthParams
 from .base import TTSEngine
 
 REPO_PTBR = "ResembleAI/Chatterbox-Multilingual-pt-br"
+REPO_BASE = "ResembleAI/chatterbox"
+
+# O pack pt-br so publica o T3 refinado, o s3gen e o tokenizer -- nao traz o voice
+# encoder (ve.pt) nem os conds.pt do modelo base, e usa outros nomes de arquivo.
+# `from_local` espera nomes fixos, entao montamos um diretorio composto:
+# arquivos do pack quando existem, do base quando faltam.
+_MAPA_PACK = {
+    "t3_mtl23ls_v2.safetensors": "t3_pt_br.safetensors",
+    "s3gen.pt": "s3gen_v3.pt",
+    "grapheme_mtl_merged_expanded_v1.json": "grapheme_mtl_merged_expanded_v1.json",
+}
+_DO_BASE = ("ve.pt", "conds.pt", "Cangjie5_TC.json")
+
+
+def montar_ckpt_ptbr(cache_dir: Path | None = None) -> Path:
+    """Compoe o checkpoint pt-br a partir do pack + o que falta do modelo base."""
+    from huggingface_hub import snapshot_download
+
+    pack = Path(snapshot_download(repo_id=REPO_PTBR, repo_type="model"))
+    base = Path(snapshot_download(repo_id=REPO_BASE, repo_type="model"))
+    destino = (cache_dir or pack.parent) / "composed-ptbr"
+    destino.mkdir(parents=True, exist_ok=True)
+
+    for alvo, origem in _MAPA_PACK.items():
+        src = pack / origem
+        if src.exists():
+            _link(src, destino / alvo)
+    for nome in _DO_BASE:
+        src = base / nome
+        if src.exists() and not (destino / nome).exists():
+            _link(src, destino / nome)
+    return destino
+
+
+def _link(src: Path, dst: Path) -> None:
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    dst.symlink_to(src.resolve())
 
 
 class ChatterboxEngine(TTSEngine):
@@ -34,10 +72,8 @@ class ChatterboxEngine(TTSEngine):
         if self.ckpt_dir is not None:
             self.model = ChatterboxMultilingualTTS.from_local(str(self.ckpt_dir), self.device)
         elif self.use_ptbr_pack:
-            from huggingface_hub import snapshot_download
-
-            path = snapshot_download(repo_id=REPO_PTBR, repo_type="model")
-            self.model = ChatterboxMultilingualTTS.from_local(path, self.device)
+            self.model = ChatterboxMultilingualTTS.from_local(
+                str(montar_ckpt_ptbr()), self.device)
         else:
             self.model = ChatterboxMultilingualTTS.from_pretrained(device=self.device)
         self.sample_rate = self.model.sr
