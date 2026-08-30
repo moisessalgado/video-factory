@@ -25,12 +25,14 @@ from .store.db import Store
 class Runner:
     def __init__(self, projeto: Path, script: Script, engine: TTSEngine,
                  verifier: Verifier | None = None, voice_ref: Path | None = None,
-                 seed_base: int = 0):
+                 seed_base: int = 0, refs_por_voz: dict[str, Path] | None = None):
         self.projeto = projeto
         self.script = script
         self.engine = engine
         self.verifier = verifier
         self.voice_ref = voice_ref
+        # voice_id -> WAV de referencia. Vazio = voz embutida do modelo.
+        self.refs_por_voz = refs_por_voz or {}
         self.seed_base = seed_base
         self.store = Store(projeto / "state.db")
         self.speaker: object | None = None
@@ -55,15 +57,15 @@ class Runner:
             return {"processados": 0, "ok": 0, "review": 0}
 
         self.engine.load()
-        if self.voice_ref:
-            self.engine.set_voice(self.voice_ref)
-            ve = getattr(self.engine.model, "ve", None)
-            if ve is not None:
-                from .qa.speaker import SpeakerCheck
-
-                self.speaker = SpeakerCheck(ve, self.voice_ref)
         if self.verifier:
             self.verifier.load()
+
+        # Processar AGRUPADO POR VOZ: preparar conditionals custa segundos, e
+        # alternar voz a cada fala de diálogo pagaria esse custo milhares de vezes.
+        # A ordem de narração é restaurada na montagem do capítulo, que lê do banco.
+        pendentes = sorted(pendentes, key=lambda r: (r["voice_id"] or "",
+                                                     r["chapter"], r["idx"]))
+        voz_atual = object()
 
         log = (self.logs_dir / f"run-{int(time.time())}.jsonl").open("a")
         n_ok = n_rev = 0
@@ -71,6 +73,9 @@ class Runner:
 
         for row in pendentes:
             cid, texto = row["chunk_id"], row["text"]
+            if row["voice_id"] != voz_atual:
+                voz_atual = row["voice_id"]
+                self._trocar_voz(voz_atual)
             self.store.claim(cid)
             t0 = time.time()
             decisao, tentativas = self._gerar_com_qa(texto)
@@ -104,7 +109,8 @@ class Runner:
                 n_rev += 1
 
             log.write(json.dumps({
-                "chunk_id": cid, "aceito": decisao.aceito, "tentativas": tentativas,
+                "chunk_id": cid, "voz": row["voice_id"], "papel": row["role"],
+                "aceito": decisao.aceito, "tentativas": tentativas,
                 "cer": decisao.melhor.qa.cer,
                 "speaker_sim": round(sim, 4) if sim is not None else None,
                 "duracao_s": round(dur, 2),
@@ -119,6 +125,20 @@ class Runner:
         return {"processados": len(pendentes), "ok": n_ok, "review": n_rev,
                 "audio_s": round(t_audio, 1), "gen_s": round(t_gen, 1),
                 "rtf": round(t_gen / t_audio, 3) if t_audio else None}
+
+    def _trocar_voz(self, voice_id: str | None) -> None:
+        """Congela os conditionals da voz do grupo e ajusta a checagem de identidade."""
+        ref = self.refs_por_voz.get(voice_id) if voice_id else None
+        ref = ref or self.voice_ref
+        self.speaker = None
+        if ref is None:
+            return
+        self.engine.set_voice(ref)
+        ve = getattr(self.engine.model, "ve", None)
+        if ve is not None:
+            from .qa.speaker import SpeakerCheck
+
+            self.speaker = SpeakerCheck(ve, ref)
 
     def _gerar_com_qa(self, texto: str) -> tuple[Decisao, int]:
         """Gera, verifica e regenera com nova seed enquanto valer a pena."""

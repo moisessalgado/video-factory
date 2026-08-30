@@ -65,6 +65,7 @@ Benchmark real (`bench/fase0_bench.py`, dados em `bench/out/bench.json`), RTX 50
 | Camada 2 do LLM + validador | ✅ pronta, testada com gemma4:12b real | `src/audiofactory/narration/llm.py` |
 | Subcomando `iam voice` | ✅ pronto | `ai-workspace/ai-stack/bin/iam` (`cmd_voice`) |
 | Registry de vozes (Fase 5) | ✅ código pronto e validado | `src/audiofactory/voices.py` |
+| **Multivoz (elenco por papel)** | ✅ pronto e validado | `src/audiofactory/text/roles.py` |
 | Voz template do canal | ✅ `narrador-v1` registrada e em uso | `voices/narrador-v1/` |
 | Motor Kokoro (rascunho/template) | ✅ instalado e funcionando | `iam voice voice template` |
 | Checagem de identidade da voz | ✅ pronta e validada contra impostores | `src/audiofactory/qa/speaker.py` |
@@ -160,6 +161,42 @@ Chatterbox. Medido com a `narrador-v1` (6 chunks, 3 capítulos):
 
 **Limiar 0,88**, no meio do vão. Um chunk abaixo disso vai para `needs_review` mesmo
 com CER perfeito — o CER garante que o texto está certo, não que a voz é a mesma.
+
+## Multivoz — elenco por papel
+
+`project.yaml` ganha `cast:` mapeando papel → voice_id. O papel `narrador` é o padrão;
+`citacao` (fala entre aspas) é detectado automaticamente; marcação explícita
+`[[voz:personagem_a]]` no texto permite elenco nominal.
+
+```yaml
+narrator: narrador-v1
+cast:
+  citacao: citacao-v1
+```
+
+Três decisões que o teste real impôs:
+
+1. **Síntese agrupada por voz.** Preparar conditionals custa segundos; alternar voz a
+   cada fala pagaria isso milhares de vezes. O pipeline ordena por `voice_id`, e a ordem
+   de narração é restaurada na montagem do capítulo (que lê do banco).
+2. **`MIN_SINTETIZAVEL = 25`.** Se a divisão por papel produzir qualquer caco menor que
+   isso, a divisão inteira é abandonada e o parágrafo vira narração. Motivo medido:
+   "respondeu o diabo." (18 chars) saiu a **5,8 c/s** contra 14–17 c/s do normal — o
+   modelo arrasta o áudio. Diálogo picado (fala curta / atribuição curta / fala curta)
+   **não** sobrevive à troca de voz; lido inteiro pelo narrador fica correto, só menos
+   teatral. Citação longa mantém voz própria.
+3. **Checagem de identidade por voz.** Cada papel é comparado com a *sua* referência.
+   Verificado: chunk de citação deu 0,955 contra `citacao-v1` (contra a do narrador daria
+   ~0,83, e seria barrado indevidamente).
+
+O `chunk_id` embute a voz: trocar a voz de um papel invalida só os chunks daquele papel.
+
+## `rights.status` é uma lista de PERMITIDOS
+
+`RIGHTS_PERMITIDOS = {dominio-publico, proprio, licenciado}` em `project.py`. Qualquer
+outro valor bloqueia o export. A versão anterior só recusava o placeholder `PREENCHER`,
+então um status escrito à mão passava — inclusive um que dizia literalmente
+"TESTE-LOCAL-NAO-PUBLICAR", que gerou o MP3 de um texto protegido antes de eu perceber.
 
 ## Depois disso
 

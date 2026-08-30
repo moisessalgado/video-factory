@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS chunks (
     idx         INTEGER NOT NULL,
     text        TEXT NOT NULL,
     source      TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'narrador',
+    voice_id    TEXT,
     state       TEXT NOT NULL DEFAULT 'pending',
     attempts    INTEGER NOT NULL DEFAULT 0,
     seed        INTEGER,
@@ -58,6 +60,11 @@ class Store:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(chunks)")}
         if "speaker_sim" not in cols:
             self.conn.execute("ALTER TABLE chunks ADD COLUMN speaker_sim REAL")
+        if "role" not in cols:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN role TEXT "
+                              "NOT NULL DEFAULT 'narrador'")
+        if "voice_id" not in cols:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN voice_id TEXT")
         self.conn.commit()
 
     @contextmanager
@@ -78,8 +85,10 @@ class Store:
             for ch, seg, cid in script.iter_segments():
                 ids.append(cid)
                 cur = c.execute(
-                    "INSERT OR IGNORE INTO chunks(chunk_id, chapter, idx, text, source) "
-                    "VALUES (?,?,?,?,?)", (cid, ch.idx, seg.idx, seg.text, seg.source))
+                    "INSERT OR IGNORE INTO chunks(chunk_id, chapter, idx, text, source, "
+                    "role, voice_id) VALUES (?,?,?,?,?,?,?)",
+                    (cid, ch.idx, seg.idx, seg.text, seg.source, seg.role,
+                     script.voice_of(seg)))
                 novos += cur.rowcount
             # Remove chunks orfaos (texto mudou -> id mudou)
             marks = ",".join("?" * len(ids))

@@ -66,17 +66,26 @@ def run(slug: str, chapters: str = typer.Option(None, help="ex.: 1,3-5"),
     """Sintetiza os chunks pendentes. Retomar é o comportamento padrão."""
     p = _proj(slug)
     s = Script.load(p / "script.json")
-    ref = voice
-    if ref is None and s.voice_id not in ("default", None):
-        from ..voices import carregar
+    from ..voices import carregar
 
+    def _ref(vid: str) -> Path | None:
+        if vid in ("default", None):
+            return None
         try:
-            ref = carregar(proj_mod.RAIZ, s.voice_id).referencia
+            return carregar(proj_mod.RAIZ, vid).referencia
         except (FileNotFoundError, ValueError) as e:
-            console.print(f"[red]voz {s.voice_id}:[/] {e}")
+            console.print(f"[red]voz {vid}:[/] {e}")
             raise typer.Exit(1)
+
+    ref = voice or _ref(s.voice_id)
+    # cada papel do elenco resolve para a sua própria referência
+    refs = {vid: r for vid in {s.voice_id, *s.cast.values()} if (r := _ref(vid))}
+    if s.cast:
+        console.print(f"elenco: {s.voice_id} (narrador) + " +
+                      ", ".join(f"{k}→{v}" for k, v in s.cast.items()))
     engine = ChatterboxEngine(s.params, use_ptbr_pack=ptbr_pack)
-    runner = Runner(p, s, engine, None if no_qa else Verifier(), voice_ref=ref)
+    runner = Runner(p, s, engine, None if no_qa else Verifier(), voice_ref=ref,
+                    refs_por_voz=refs)
     novos, limpos = runner.sync()
     console.print(f"fila: +{novos} novos, {limpos} obsoletos/recuperados")
 
@@ -141,8 +150,13 @@ def export(slug: str, formato: str = "mp3"):
 
     p = _proj(slug)
     cfg = proj_mod.carregar_config(p)
-    if cfg.get("rights", {}).get("status") in (None, "PREENCHER"):
-        console.print("[red]bloqueado:[/] preencha `rights:` em project.yaml (TDD §14.3)")
+    status = (cfg.get("rights") or {}).get("status")
+    if status not in proj_mod.RIGHTS_PERMITIDOS:
+        console.print(f"[red]export bloqueado[/] — `rights.status` = {status!r}")
+        console.print("Valores que liberam a exportação: " +
+                      ", ".join(sorted(proj_mod.RIGHTS_PERMITIDOS)))
+        console.print("[dim]Qualquer outro valor é tratado como não liberado. "
+                      "Isso é proposital: ver TDD §14.3.[/]")
         raise typer.Exit(1)
     out = p / "output"
     for wav in sorted((p / "audio" / "chapters").glob("*.wav")):

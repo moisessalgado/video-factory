@@ -35,6 +35,7 @@ class Segment(BaseModel):
     source: str
     text: str
     kind: str = "prose"  # prose | heading | quote | dialogue
+    role: str = "narrador"  # papel; o cast do script mapeia papel -> voice_id
     pause_after_ms: int = 0
 
     def chunk_id(self, chapter_idx: int, voice_id: str, params: SynthParams,
@@ -70,7 +71,9 @@ class Rights(BaseModel):
 class Script(BaseModel):
     title: str
     author: str | None = None
-    voice_id: str
+    voice_id: str  # voz do papel "narrador"
+    # cast: papel -> voice_id. Papel ausente cai no narrador.
+    cast: dict[str, str] = Field(default_factory=dict)
     params: SynthParams = Field(default_factory=SynthParams)
     engine_version: str = "chatterbox-mtl-v3"
     rights: Rights | None = None
@@ -80,11 +83,19 @@ class Script(BaseModel):
     def total_chars(self) -> int:
         return sum(c.char_count for c in self.chapters)
 
+    def voice_of(self, seg: "Segment") -> str:
+        """Voz efetiva de um segmento. Papel sem voz declarada usa a do narrador."""
+        return self.cast.get(seg.role, self.voice_id)
+
     def iter_segments(self):
-        """Rende (chapter, segment, chunk_id) na ordem de narracao."""
+        """Rende (chapter, segment, chunk_id) na ordem de narracao.
+
+        O chunk_id ja embute a voz: trocar a voz de um papel invalida so os chunks
+        daquele papel, e o resto do livro continua valendo em cache.
+        """
         for ch in self.chapters:
             for seg in ch.segments:
-                yield ch, seg, seg.chunk_id(ch.idx, self.voice_id, self.params,
+                yield ch, seg, seg.chunk_id(ch.idx, self.voice_of(seg), self.params,
                                             self.engine_version)
 
     def save(self, path: Path) -> None:

@@ -7,10 +7,16 @@ import yaml
 
 from .chunk.splitter import split_paragraph
 from .ingest.loader import detectar_capitulos, limpar, ler, paragrafos
+from .text.roles import dividir_por_papel, tem_dialogo
 from .narration.rules import detect_ambiguous, normalize
 from .script.models import Chapter, Rights, Script, Segment, SynthParams
 
 RAIZ = Path(__file__).resolve().parents[2]
+
+# Lista de PERMITIDOS, nunca de proibidos: qualquer status desconhecido bloqueia a
+# exportacao. A versao anterior so recusava o placeholder, entao um status escrito
+# à mão -- inclusive "TESTE-LOCAL-NAO-PUBLICAR" -- passava e gerava o MP3.
+RIGHTS_PERMITIDOS = {"dominio-publico", "proprio", "licenciado"}
 
 
 def dir_projeto(slug: str, raiz: Path | None = None) -> Path:
@@ -26,6 +32,10 @@ def criar(slug: str, fonte: Path, narrator: str, raiz: Path | None = None,
         "titulo": titulo or fonte.stem,
         "fonte": str(fonte),
         "narrator": narrator,
+        # papel -> voice_id. Papel ausente usa a voz do narrator.
+        # Papéis detectados automaticamente: "citacao" (fala entre aspas).
+        # Marcação explícita no texto: [[voz:personagem_a]] ...
+        "cast": {},
         "rights": {"status": "PREENCHER", "autor": None, "ano_morte": None,
                    "tradutor": None, "fonte": None, "verificado_em": None},
         "params": SynthParams().model_dump(),
@@ -60,6 +70,7 @@ def montar_script(proj: Path, lexicon: dict[str, str] | None = None,
     script = Script(
         title=cfg["titulo"],
         voice_id=cfg["narrator"],
+        cast=cfg.get("cast") or {},
         params=SynthParams(**cfg.get("params", {})),
         rights=Rights(**cfg["rights"]) if cfg.get("rights", {}).get("status") != "PREENCHER" else None,
     )
@@ -78,34 +89,41 @@ def montar_script(proj: Path, lexicon: dict[str, str] | None = None,
         linhas_diff.append(f"\n## {titulo}\n")
         s_idx = 0
         for par in paragrafos(corpo):
-            fonte = par
-            if usar_llm:
-                from .narration.llm import resolver
+            for papel, fonte in dividir_por_papel(par):
+                if usar_llm:
+                    from .narration.llm import resolver
 
-                amb = detect_ambiguous(par)
-                ambiguos += len(amb)
-                if amb:
-                    fonte, sugestoes = resolver(par, amb, cache=cache,
-                                                **({"modelo": modelo_llm} if modelo_llm else {}))
-                    for s in sugestoes:
-                        if s.aceita:
-                            linhas_diff.append(f"  - [LLM] `{s.span}` → `{s.expansao}`")
-                        else:
-                            rejeitadas += 1
-                            linhas_diff.append(
-                                f"  - [LLM rejeitado, mantido original] `{s.span}`: {s.motivo}")
-            r = normalize(fonte, lexicon)
-            if not usar_llm:
-                ambiguos += len(r.ambiguous)
-            if r.applied:
-                linhas_diff.append(f"- `{par[:70]}…`")
-                for orig, novo in r.applied:
-                    linhas_diff.append(f"  - `{orig}` → `{novo}`")
-            for pedaco in split_paragraph(r.text, max_chars=max_chars):
-                cap.segments.append(Segment(idx=s_idx, source=par, text=pedaco))
-                s_idx += 1
+                    amb = detect_ambiguous(fonte)
+                    ambiguos += len(amb)
+                    if amb:
+                        fonte, sugestoes = resolver(fonte, amb, cache=cache,
+                                                    **({"modelo": modelo_llm} if modelo_llm else {}))
+                        for s in sugestoes:
+                            if s.aceita:
+                                linhas_diff.append(f"  - [LLM] `{s.span}` → `{s.expansao}`")
+                            else:
+                                rejeitadas += 1
+                                linhas_diff.append(
+                                    f"  - [LLM rejeitado, mantido original] `{s.span}`: {s.motivo}")
+                r = normalize(fonte, lexicon)
+                if not usar_llm:
+                    ambiguos += len(r.ambiguous)
+                if r.applied:
+                    linhas_diff.append(f"- `{par[:70]}…`")
+                    for orig, novo in r.applied:
+                        linhas_diff.append(f"  - `{orig}` → `{novo}`")
+                for pedaco in split_paragraph(r.text, max_chars=max_chars):
+                    cap.segments.append(Segment(idx=s_idx, source=par, text=pedaco,
+                                                role=papel))
+                    s_idx += 1
         if cap.segments:
             script.chapters.append(cap)
+
+    papeis = {s.role for c in script.chapters for s in c.segments}
+    if papeis - {"narrador"} and not script.cast:
+        linhas_diff.append(
+            f"\n> ⚠️ Papéis detectados sem voz atribuída: {sorted(papeis - {'narrador'})}. "
+            "Defina `cast:` no project.yaml para dar voz própria a eles.\n")
 
     script.save(proj / "script.json")
     if usar_llm:
