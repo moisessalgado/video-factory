@@ -63,7 +63,10 @@ def script(slug: str, max_chars: int = 300,
 def run(slug: str, chapters: str = typer.Option(None, help="ex.: 1,3-5"),
         no_qa: bool = typer.Option(False, "--no-qa"),
         voice: Path = typer.Option(None, help="WAV de referência (sobrepõe o narrator)"),
-        ptbr_pack: bool = typer.Option(True)):
+        ptbr_pack: bool = typer.Option(True),
+        workers: int = typer.Option(1, help="processos de síntese em paralelo na GPU"),
+        free_ollama: bool = typer.Option(False, "--free-ollama",
+                                         help="descarrega os modelos do Ollama antes de sintetizar")):
     """Sintetiza os chunks pendentes. Retomar é o comportamento padrão."""
     p = _proj(slug)
     s = Script.load(p / "script.json")
@@ -84,19 +87,28 @@ def run(slug: str, chapters: str = typer.Option(None, help="ex.: 1,3-5"),
     if s.cast:
         console.print(f"elenco: {s.voice_id} (narrador) + " +
                       ", ".join(f"{k}→{v}" for k, v in s.cast.items()))
-    engine = ChatterboxEngine(s.params, use_ptbr_pack=ptbr_pack)
-    runner = Runner(p, s, engine, None if no_qa else Verifier(), voice_ref=ref,
-                    refs_por_voz=refs)
+    if free_ollama:
+        _liberar_ollama()
+
+    fabrica = lambda: ChatterboxEngine(s.params, use_ptbr_pack=ptbr_pack)
+    runner = Runner(p, s, fabrica(), None if no_qa else Verifier(), voice_ref=ref,
+                    refs_por_voz=refs, engine_factory=fabrica,
+                    verifier_factory=Verifier)
     novos, limpos = runner.sync()
     console.print(f"fila: +{novos} novos, {limpos} obsoletos/recuperados")
 
     caps = _parse_chapters(chapters)
+    if workers > 1:
+        console.print(f"[dim]{workers} workers — cada um carrega o seu modelo "
+                      f"(~3,5 GB de VRAM cada)[/]")
     with console.status("sintetizando…") as st:
         def prog(cid, d):
             st.update(f"{cid} {'ok' if d.aceito else '[red]review[/]'}")
-        r = runner.run(caps, progress=prog)
+        r = runner.run(caps, progress=prog, workers=workers)
     console.print(f"[green]{r['ok']} ok[/] · [yellow]{r['review']} para revisão[/] · "
                   f"RTF {r.get('rtf')} · {r.get('audio_s')}s de áudio")
+    if r.get("review"):
+        console.print(f"[dim]revise com `iam voice review {slug}`[/]")
 
 
 @app.command()
@@ -145,23 +157,89 @@ def build(slug: str):
 
 
 @app.command()
-def export(slug: str, formato: str = "mp3"):
-    """Masteriza e exporta. Bloqueado sem o campo rights: preenchido."""
-    from ..audio.process import exportar, masterizar
+def export(slug: str, formato: str = typer.Option("mp3", help="mp3, aac, flac, wav — separados por vírgula"),
+           juntar: bool = typer.Option(True, "--juntar/--sem-juntar",
+                                       help="também gera o arquivo único contínuo"),
+           bitrate: str = "192k"):
+    """Masteriza, exporta e escreve o chapters.txt."""
+    from ..audio.process import chapters_txt, concatenar, duracao, exportar, masterizar
 
     p = _proj(slug)
     cfg = proj_mod.carregar_config(p)
-    status = (cfg.get("rights") or {}).get("status")
+    s = Script.load(p / "script.json")
+    titulos = {c.idx: c.title for c in s.chapters}
     # `rights` é registro de procedência, não autorização: o export nunca é
     # bloqueado por ele. A decisão sobre o que publicar é do operador.
+    status = (cfg.get("rights") or {}).get("status")
     console.print(f"[dim]direitos declarados: {status or '(não preenchido)'}[/]")
+
     out = p / "output"
-    for wav in sorted((p / "audio" / "chapters").glob("*.wav")):
+    out.mkdir(parents=True, exist_ok=True)
+    wavs = sorted((p / "audio" / "chapters").glob("ch*.wav"))
+    if not wavs:
+        console.print("[red]nenhum capítulo montado[/] — rode `build` antes")
+        raise typer.Exit(1)
+    formatos = [f.strip() for f in formato.split(",") if f.strip()]
+
+    masters: list[Path] = []
+    duracoes: list[tuple[str, float]] = []
+    for n, wav in enumerate(wavs, start=1):
+        cap = int(wav.stem[2:]) if wav.stem[2:].isdigit() else n
         master = out / f"{wav.stem}-master.wav"
         masterizar(wav, master)
-        destino = exportar(master, out / f"{wav.stem}.{formato}", formato,
-                           {"title": cfg["titulo"], "album": cfg["titulo"]})
-        console.print(f"[green]{destino}[/]")
+        masters.append(master)
+        duracoes.append((titulos.get(cap, wav.stem), duracao(master)))
+        meta = {"title": titulos.get(cap, wav.stem), "album": cfg["titulo"],
+                "track": str(cap), "artist": cfg.get("narrator", "")}
+        for fmt in formatos:
+            console.print(f"[green]{exportar(master, out / f'{wav.stem}.{fmt}', fmt, meta, bitrate)}[/]")
+
+    # Os carimbos são cumulativos e só valem contra o arquivo contínuo.
+    (out / "chapters.txt").write_text(chapters_txt(duracoes), encoding="utf-8")
+    total = sum(d for _, d in duracoes)
+    console.print(f"[green]{out/'chapters.txt'}[/] — {len(duracoes)} capítulos, "
+                  f"{total/60:.1f} min")
+
+    if juntar and len(masters) > 1:
+        completo = out / f"{slug}-completo.wav"
+        concatenar(masters, completo)
+        meta = {"title": cfg["titulo"], "album": cfg["titulo"],
+                "artist": cfg.get("narrator", "")}
+        for fmt in formatos:
+            console.print(f"[green]{exportar(completo, out / f'{slug}-completo.{fmt}', fmt, meta, bitrate)}[/]")
+
+
+@app.command()
+def report(slug: str, medir: bool = typer.Option(True, "--medir/--sem-medir",
+                                                 help="medir loudness dos masters (usa ffmpeg)")):
+    """Confronta as métricas do projeto com os alvos objetivos do TDD."""
+    from ..qa.report import coletar, markdown
+
+    p = _proj(slug)
+    cfg = proj_mod.carregar_config(p)
+    db = Store(p / "state.db")
+    metricas = coletar(p, db, medir_audio=medir)
+    review = db.needs_review()
+
+    t = Table("métrica", "medido", "alvo", "situação", "detalhe")
+    for m in metricas:
+        if m.valor is None:
+            val = "—"
+        elif "RTF" in m.nome:
+            val = f"{m.valor:.3f}"
+        elif "Loudness" in m.nome:
+            val = f"{m.valor:.1f} LUFS"
+        else:
+            val = f"{m.valor*100:.1f}%"
+        cor = {True: "green", False: "red", None: "dim"}[m.ok]
+        t.add_row(m.nome, val, m.alvo, f"[{cor}]{m.marca}[/]", m.detalhe)
+    console.print(t)
+
+    destino = p / "qa" / "report.md"
+    destino.write_text(markdown(cfg["titulo"], metricas, review), encoding="utf-8")
+    console.print(f"[green]{destino}[/]")
+    if any(m.ok is False for m in metricas):
+        raise typer.Exit(1)
 
 
 voice_app = typer.Typer(help="Registry de vozes do canal", no_args_is_help=True)
@@ -295,6 +373,26 @@ def doctor():
     console.print(f"ffmpeg {ok(shutil.which('ffmpeg'))} · ffprobe {ok(shutil.which('ffprobe'))}")
     lic = proj_mod.RAIZ / "LICENSES.md"
     console.print(f"registro de licenças {ok(lic.exists())} — {lic}")
+
+
+def _liberar_ollama() -> None:
+    """Descarrega os modelos do Ollama da GPU antes da sintese.
+
+    Nao e obrigatorio -- a Fase 0 mediu 3,5 GB de pico para o TTS em 16 GB, e o
+    gemma4:12b cabe junto. Vira util com varios workers, ou se a GPU estiver
+    dividida com outra coisa.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("ollama"):
+        console.print("[yellow]ollama não encontrado — nada a liberar[/]")
+        return
+    ps = subprocess.run(["ollama", "ps"], capture_output=True, text=True)
+    modelos = [l.split()[0] for l in ps.stdout.splitlines()[1:] if l.strip()]
+    for m in modelos:
+        subprocess.run(["ollama", "stop", m], capture_output=True, text=True)
+    console.print(f"[dim]ollama: {len(modelos) or 'nenhum'} modelo(s) descarregado(s)[/]")
 
 
 def _parse_chapters(spec: str | None) -> list[int] | None:
