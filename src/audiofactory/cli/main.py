@@ -310,6 +310,9 @@ def _mostrar_take(take, titulo: str) -> bool:
     t.add_row("sinal/ruído", f"{take.snr_db:.1f} dB", f"> {SNR_MIN_DB:.0f} dB")
     t.add_row("banda útil", f"{take.corte_hz/1000:.1f} kHz", f"> {CORTE_MIN_HZ/1000:.0f} kHz")
     t.add_row("clipping", f"{take.clip_fracao*100:.3f}%", "0%")
+    from ..audio.analise import MODULACAO_MIN_DB
+    t.add_row("modulação (voz?)", f"{take.modulacao_db:.1f} dB",
+              f"> {MODULACAO_MIN_DB:.0f} dB")
     console.print(t)
     for a in take.avisos:
         console.print(f"[yellow]aviso:[/] {a}")

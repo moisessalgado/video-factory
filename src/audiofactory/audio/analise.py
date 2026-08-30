@@ -24,6 +24,24 @@ SNR_MIN_DB = 35.0
 DC_MAX = 0.002
 CLIP_MAX_FRACAO = 1e-5
 
+# Fala tem modulacao silabica: silabas, pausas, respiracao. A medida e a distancia
+# entre o percentil 90 e a mediana do nivel por janela -- as silabas fortes contra
+# o corpo do sinal. Desvio-padrao NAO serve: ruido de sala afunda o desvio de uma
+# fala perfeitamente audivel, e o diagnostico sai errado.
+#
+# Medido (janelas de 50 ms, DC removido):
+#   fala narrada real, 40 chunks ....... 6,1 a 26,0  (mediana 8,0)
+#   referencia narrador-v1 ............. 7,3
+#   fala em sala barulhenta ............ 6,1
+#   ruido de amplificador puro ......... 0,2
+#   microfone mudo (caso real medido) .. 3,7
+# 5,0 fica no meio do vao entre 3,7 e 6,1.
+#
+# E o teste que distingue "microfone mudo" de "microfone baixo". Sem ele um cabo
+# solto aparece como uma lista de problemas de nivel, e a pessoa passa a tarde
+# subindo ganho atras de sinal que nao existe.
+MODULACAO_MIN_DB = 5.0
+
 # Um microfone de headset Bluetooth (HFP) corta em 4 ou 8 kHz. Voz masculina tem
 # energia util ate ~12 kHz, e e a faixa de 8-14 kHz que da o "ar" da narracao.
 CORTE_MIN_HZ = 11000.0
@@ -43,11 +61,24 @@ class Take:
     dc: float
     clip_fracao: float
     corte_hz: float
+    modulacao_db: float
+
+    @property
+    def sem_voz(self) -> bool:
+        """Sinal estacionario: nao ha fala nenhuma no arquivo."""
+        return self.modulacao_db < MODULACAO_MIN_DB
 
     @property
     def problemas(self) -> list[str]:
         """Falhas que tornam a referencia inadequada. Vazio = pode registrar."""
         p = []
+        if self.sem_voz:
+            # Diagnostico primeiro: os problemas de nivel abaixo sao consequencia,
+            # e listar todos junto manda a pessoa mexer no ganho a toa.
+            return [f"sinal estacionário (modulação de {self.modulacao_db:.1f} dB, "
+                    f"fala tem mais de {MODULACAO_MIN_DB:.0f}) — não há voz neste "
+                    "arquivo: o microfone não está captando. Verifique o cabo, o "
+                    "plugue e a chave de mudo do microfone, não o ganho"]
         if self.clip_fracao > CLIP_MAX_FRACAO:
             p.append(f"clipping em {self.clip_fracao*100:.2f}% das amostras — "
                      "abaixe o ganho de entrada e regrave")
@@ -106,6 +137,12 @@ def analisar_audio(mono: np.ndarray, sr: int, canais: int = 1) -> Take:
     ruido = float(np.median(ordenado[:max(1, len(ordenado) // 10)]))
     fala = float(np.median(ordenado[-max(1, len(ordenado) // 4):]))
 
+    # DC removido antes de medir modulacao: um offset preenche as pausas e
+    # achataria o nivel, fazendo uma gravacao com defeito de placa parecer muda.
+    sem_dc = mono - mono.mean()
+    rms_sem_dc = np.sqrt((sem_dc[:n].reshape(-1, jan).astype(np.float64) ** 2).mean(axis=1))
+    niveis_db = 20 * np.log10(np.maximum(rms_sem_dc, 1e-12))
+    modulacao = float(np.percentile(niveis_db, 90) - np.percentile(niveis_db, 50))
     return Take(
         duracao_s=len(mono) / sr,
         sample_rate=sr,
@@ -117,6 +154,7 @@ def analisar_audio(mono: np.ndarray, sr: int, canais: int = 1) -> Take:
         dc=dc,
         clip_fracao=clip,
         corte_hz=corte_espectral(mono, sr),
+        modulacao_db=modulacao,
     )
 
 

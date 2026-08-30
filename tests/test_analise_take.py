@@ -137,3 +137,56 @@ def test_voz_template_nao_passa_pelo_gate_de_microfone(tmp_path):
                   fala_sintetica(16, sr=24000, pico=0.5), sr=24000)
     v = criar(tmp_path / "raiz", "dora-v1", ref, template_de="Kokoro-82M")
     assert (v.dir / "PROVENANCE.md").exists()
+
+
+# -- presenca de voz ----------------------------------------------------------
+
+def ruido_estacionario(segundos=15.0, sr=SR, nivel=0.01, seed=1):
+    """Ruído de amplificador: nível constante, sem sílabas nem pausas."""
+    rng = np.random.default_rng(seed)
+    return (rng.standard_normal(int(sr * segundos)) * nivel).astype(np.float32)
+
+
+def test_pega_microfone_mudo():
+    """O caso real: jack detectado, VREF ligado, ganho aplicado — e nenhuma voz.
+    Sem esta checagem o diagnóstico vira uma lista de problemas de nível, e a
+    pessoa sobe ganho atrás de sinal que não existe."""
+    t = analisar_audio(ruido_estacionario(), SR)
+    assert t.sem_voz
+    assert len(t.problemas) == 1 and "não há voz" in t.problemas[0]
+
+
+def test_fala_tem_modulacao():
+    t = analisar_audio(fala_sintetica(pico=0.5), SR)
+    assert not t.sem_voz
+
+
+def test_fala_em_sala_barulhenta_nao_e_confundida_com_mudo():
+    """Ruído afunda o desvio-padrão de uma fala audível; por isso a medida é
+    p90-p50 e não desvio. O diagnóstico tem de ser a sala, não o cabo."""
+    t = analisar_audio(fala_sintetica(pico=0.5, ruido=0.02), SR)
+    assert not t.sem_voz
+    assert any("ruído" in p or "sinal/ruído" in p for p in t.problemas)
+
+
+def test_offset_dc_nao_e_confundido_com_mudo():
+    """DC preenche as pausas e achataria o nível se não fosse removido antes."""
+    t = analisar_audio(fala_sintetica(pico=0.5) + 0.05, SR)
+    assert not t.sem_voz
+    assert any("DC" in p for p in t.problemas)
+
+
+@pytest.mark.parametrize("modulacao,esperado", [(3.7, True), (6.1, False)])
+def test_limiar_fica_entre_o_caso_real_e_a_fala_real(modulacao, esperado):
+    """3,7 foi o microfone mudo medido; 6,1 foi o pior chunk de fala narrada real."""
+    from audiofactory.audio.analise import MODULACAO_MIN_DB
+
+    assert (modulacao < MODULACAO_MIN_DB) is esperado
+
+
+def test_fala_baixa_ainda_e_reconhecida_como_voz():
+    """Sinal fraco é problema de ganho, não de cabo: os diagnósticos não podem
+    se confundir."""
+    t = analisar_audio(fala_sintetica(pico=0.03), SR)
+    assert not t.sem_voz
+    assert any("fraco demais" in p for p in t.problemas)
