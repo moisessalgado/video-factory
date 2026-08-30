@@ -1,0 +1,208 @@
+"""Camada 1 do normalizador de narracao: regras deterministicas pt-BR (TDD 6.1).
+
+Faz 90-95% do trabalho sem LLM. O que a regra nao resolve com seguranca e marcado
+como span ambiguo, para a Camada 2 decidir -- nunca adivinhado aqui.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from num2words import num2words
+
+# --- tabelas -----------------------------------------------------------------
+
+ABREVIACOES = {
+    "Sr.": "senhor", "Sra.": "senhora", "Srta.": "senhorita",
+    "Dr.": "doutor", "Dra.": "doutora", "Prof.": "professor", "Profa.": "professora",
+    "D.": "dom", "Exmo.": "excelentissimo", "Ilmo.": "ilustrissimo",
+    "pág.": "página", "págs.": "páginas", "p.": "página",
+    "cap.": "capítulo", "séc.": "século", "sécs.": "séculos",
+    "art.": "artigo", "cf.": "conforme", "op. cit.": "obra citada",
+    "etc.": "etcétera", "ex.": "exemplo", "obs.": "observação",
+    "vol.": "volume", "ed.": "edição", "org.": "organizador",
+    "n.": "número", "nº": "número", "núm.": "número",
+    "a.C.": "antes de Cristo", "d.C.": "depois de Cristo",
+}
+
+UNIDADES = {
+    "km": "quilômetros", "km²": "quilômetros quadrados", "m": "metros",
+    "m²": "metros quadrados", "cm": "centímetros", "mm": "milímetros",
+    "kg": "quilos", "g": "gramas", "t": "toneladas",
+    "l": "litros", "ml": "mililitros", "h": "horas", "min": "minutos", "s": "segundos",
+    "°C": "graus celsius", "%": "por cento",
+}
+
+SIMBOLOS = {
+    "&": " e ", "@": " arroba ", "#": " número ", "+": " mais ",
+    "=": " igual a ", "§": "parágrafo ", "…": "...",
+}
+
+MESES = {
+    1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho",
+    7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro",
+    12: "dezembro",
+}
+
+ROMANOS = {
+    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8,
+    "IX": 9, "X": 10, "XI": 11, "XII": 12, "XIII": 13, "XIV": 14, "XV": 15,
+    "XVI": 16, "XVII": 17, "XVIII": 18, "XIX": 19, "XX": 20, "XXI": 21,
+}
+
+
+@dataclass
+class AmbiguousSpan:
+    """Trecho que a regra recusa decidir. Vai para a Camada 2 (LLM)."""
+
+    start: int
+    end: int
+    text: str
+    reason: str
+
+
+@dataclass
+class NormalizationResult:
+    text: str
+    ambiguous: list[AmbiguousSpan] = field(default_factory=list)
+    applied: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _num(n: int | float, ordinal: bool = False) -> str:
+    """num2words em pt_BR insere virgulas ("mil, seiscentos e quarenta e oito").
+
+    Numa narracao isso vira uma pausa espuria no meio do numero, entao a virgula
+    interna e removida -- a conjuncao "e" ja basta para a prosodia.
+    """
+    out = num2words(n, lang="pt_BR", to="ordinal" if ordinal else "cardinal")
+    return out.replace(",", "")
+
+
+def _expand_lexicon(text: str, lexicon: dict[str, str]) -> tuple[str, list]:
+    """Aplica o lexico de pronuncia (nomes proprios, termos indigenas)."""
+    applied = []
+    for grafia in sorted(lexicon, key=len, reverse=True):
+        pattern = re.compile(rf"\b{re.escape(grafia)}\b")
+        if pattern.search(text):
+            text = pattern.sub(lexicon[grafia], text)
+            applied.append((grafia, lexicon[grafia]))
+    return text, applied
+
+
+def normalize(text: str, lexicon: dict[str, str] | None = None) -> NormalizationResult:
+    """Normaliza um paragrafo para narracao. Nao reescreve prosa."""
+    applied: list[tuple[str, str]] = []
+    ambiguous: list[AmbiguousSpan] = []
+
+    if lexicon:
+        text, lex_applied = _expand_lexicon(text, lexicon)
+        applied += lex_applied
+
+    # Abreviacoes (antes dos numeros: "séc. XVII" depende disso)
+    for abbr, full in sorted(ABREVIACOES.items(), key=lambda kv: -len(kv[0])):
+        pattern = re.compile(rf"(?<!\w){re.escape(abbr)}")
+        if pattern.search(text):
+            text = pattern.sub(full, text)
+            applied.append((abbr, full))
+
+    # Seculos em romanos: "século XVII" -> "século dezessete"
+    def _seculo(m):
+        val = ROMANOS.get(m.group(2).upper())
+        if val is None:
+            return m.group(0)
+        applied.append((m.group(0), f"{m.group(1)} {_num(val)}"))
+        return f"{m.group(1)} {_num(val)}"
+
+    text = re.sub(r"\b(séculos?)\s+([IVXL]+)\b", _seculo, text, flags=re.IGNORECASE)
+
+    # Datas por extenso: "5 de maio de 1648"
+    def _data_completa(m):
+        dia, mes, ano = int(m.group(1)), m.group(2), int(m.group(3))
+        novo = f"{_num(dia)} de {mes} de {_num(ano)}"
+        applied.append((m.group(0), novo))
+        return novo
+
+    meses_re = "|".join(MESES.values())
+    text = re.sub(rf"\b(\d{{1,2}})\s+de\s+({meses_re})\s+de\s+(\d{{3,4}})\b",
+                  _data_completa, text, flags=re.IGNORECASE)
+
+    # Datas numericas: 05/05/1648
+    def _data_num(m):
+        d, mth, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not (1 <= mth <= 12):
+            return m.group(0)
+        novo = f"{_num(d)} de {MESES[mth]} de {_num(y)}"
+        applied.append((m.group(0), novo))
+        return novo
+
+    text = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", _data_num, text)
+
+    # Horas: 14h30
+    def _hora(m):
+        h, mi = int(m.group(1)), int(m.group(2) or 0)
+        novo = f"{_num(h)} horas" + (f" e {_num(mi)}" if mi else "")
+        applied.append((m.group(0), novo))
+        return novo
+
+    text = re.sub(r"\b(\d{1,2})h(\d{2})?\b", _hora, text)
+
+    # Percentual e unidades: "12 km", "30%"
+    def _unidade(m):
+        val, un = m.group(1), m.group(2)
+        if un not in UNIDADES:
+            return m.group(0)
+        num = float(val.replace(".", "").replace(",", "."))
+        num_i = int(num) if num == int(num) else num
+        novo = f"{_num(num_i)} {UNIDADES[un]}"
+        applied.append((m.group(0), novo))
+        return novo
+
+    unidades_re = "|".join(re.escape(u) for u in sorted(UNIDADES, key=len, reverse=True))
+    text = re.sub(rf"\b([\d.,]+)\s*({unidades_re})(?!\w)", _unidade, text)
+
+    # Ordinais explicitos: 1º, 2ª
+    def _ordinal(m):
+        n = int(m.group(1))
+        fem = m.group(2) in ("ª", "a")
+        palavra = num2words(n, lang="pt_BR", to="ordinal")
+        if fem:
+            palavra = re.sub(r"o\b", "a", palavra)
+        applied.append((m.group(0), palavra))
+        return palavra
+
+    text = re.sub(r"\b(\d+)\s*(º|ª|°)", _ordinal, text)
+
+    # Simbolos soltos
+    for sym, spoken in SIMBOLOS.items():
+        if sym in text:
+            text = text.replace(sym, spoken)
+            applied.append((sym, spoken.strip()))
+
+    # Numeros restantes
+    def _numero(m):
+        raw = m.group(0)
+        limpo = raw.replace(".", "").replace(",", ".")
+        try:
+            val = float(limpo)
+        except ValueError:
+            return raw
+        val_i = int(val) if val == int(val) else val
+        # Anos de 4 digitos sao ambiguos: podem ser data ou quantidade.
+        # A regra expande como cardinal (leitura correta em pt-BR para anos)
+        # mas registra o span para a Camada 2 confirmar quando houver duvida.
+        novo = _num(val_i)
+        applied.append((raw, novo))
+        return novo
+
+    for m in re.finditer(r"\b\d{4}\b", text):
+        ambiguous.append(AmbiguousSpan(m.start(), m.end(), m.group(0),
+                                       "numero de 4 digitos: ano ou quantidade?"))
+    text = re.sub(r"\b[\d.,]*\d\b", _numero, text)
+
+    # Numerais romanos isolados apos substantivo (Dom Pedro II) -> ambiguo
+    for m in re.finditer(r"\b([A-ZÁ-Ú][a-zá-ú]+)\s+([IVXL]{1,5})\b", text):
+        ambiguous.append(AmbiguousSpan(m.start(2), m.end(2), m.group(2),
+                                       "romano apos nome proprio: ordinal contextual"))
+
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return NormalizationResult(text=text, ambiguous=ambiguous, applied=applied)

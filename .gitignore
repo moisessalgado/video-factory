@@ -1,0 +1,12 @@
+.venv/
+models/
+cache/
+projects/
+books/
+bench/out*/
+bench/*.log
+__pycache__/
+*.egg-info/
+
+# NUNCA versionar vozes de referencia (TDD secao 15)
+voices/
