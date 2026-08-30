@@ -82,7 +82,7 @@ Benchmark real (`bench/fase0_bench.py`, dados em `bench/out/bench.json`), RTX 50
 | 2 workers na GPU | ✅ pronto, **ganho medido de 1,25×** | `pipeline.py` (`_repartir`) |
 | `--free-ollama` | ✅ pronto | `cli/main.py` (`_liberar_ollama`) |
 | Histórico de execuções (tabela `runs`) | ✅ pronto — é o RTF de relógio | `store/db.py` |
-| Testes automatizados da fase | ✅ 19 testes | `tests/test_fase6.py` |
+| Testes automatizados | ✅ 46 testes | `tests/` |
 
 ### PDF: extração por BLOCOS, não por linhas
 
@@ -309,12 +309,98 @@ A decisão editorial sobre o que publicar é do operador do canal, não da ferra
 
 ## Depois disso
 
-1. **Primeiro livro real** de domínio público, ponta a ponta, com a `narrador-v1`.
-   É o único item que falta do MVP — o pipeline está completo.
+1. **Primeiro livro real** de domínio público (~5 h), ponta a ponta. O discurso do
+   Krishnamurti (17 min) já validou o caminho completo; falta a escala e um texto
+   publicável.
 2. **V2**: música/trilha com ducking no Chapter Builder.
 3. **UI de revisão** (TDD §18, Fase 7): só se `needs_review` virar gargalo real.
 
-### Krishnamurti: o teste rodou só com um trecho
+## Primeiro texto real ponta a ponta — CONCLUÍDO ✅
+
+Discurso de Dissolução da Ordem da Estrela, 15 KB, `projects/krishnamurti-completo/`,
+uma voz só (`narrador-v1`, `cast` vazio). **17,3 min de MP3 entregues a −16,10 LUFS
+/ −1,35 dBTP**, 133 de 133 chunks aprovados, CER médio 0,0088, identidade de voz
+média 0,939. RTF de 0,44 com 2 workers (17,8 min de áudio em 7,9 min de relógio).
+
+O valor do teste não foi o áudio: foi expor **quatro defeitos que só aparecem em
+texto real**, todos de calibração feita em amostra pequena.
+
+### 1. A detecção de capítulos comia texto
+
+Duas linhas sumiram em silêncio — o pior tipo de defeito aqui, porque o áudio sai
+correto e só falta um pedaço.
+
+- `_TITULO_ROMANO` tinha o separador **opcional**, então "**D**iscurso de Dissolução"
+  casava como numeral romano "D" mais título. I, V, X, L, C, D e M abrem meia língua
+  portuguesa ("Como", "Livro", "Vocês", "Isso", "Minha").
+- O que vinha **antes do primeiro marco era descartado**: rosto, autor, epígrafe.
+  Agora vira um capítulo "Abertura".
+- Em `_CAPITULO`, o `[a-zà-ú]+` do número casava com qualquer palavra ("Livro dos
+  dias", "Parte de mim"). Virou lista fechada de ordinais. E o romano precisou de
+  `(?-i:...)`: o padrão é IGNORECASE, e o "d" de "dos" casava como numeral.
+
+### 2. O piso de 10 c/s reprovava chunk curto perfeito
+
+7 dos 8 primeiros reprovados tinham **CER 0,000**. O overhead (ataque, respiração,
+pausa final) não encolhe com o texto. Ajustado sobre os 126 chunks aprovados:
+
+```
+dur = 0,83 s + chars / 15,4        razão dur/esperada observada: 0,79 a 1,30
+```
+
+O lado **curto demais** (truncamento) continua apertado, porque discrimina bem:
+cortar metade dá razão ~0,50. O lado **longo demais** ficou generoso de propósito —
+medido, um título lido com pausa deu razão **1,70 com CER 0,000**, e o arrasto real
+documentado neste arquivo deu **1,54**. As duas populações se sobrepõem: duração
+sozinha não as separa, e ali quem manda é o CER.
+
+### 3. O limiar de voz 0,88 acusava áudio curto, não voz trocada
+
+Sobraram 5 chunks reprovados por similaridade (0,839–0,879) com texto perfeito.
+Medido cortando os **mesmos** chunks em várias durações, controle `citacao-v1`:
+
+| corte | mesma voz (min) | impostor (máx) | vão |
+|---|---|---|---|
+| 2 s | 0,798 | 0,728 | +0,070 |
+| 3 s | 0,866 | 0,756 | +0,109 |
+| 4 s | 0,898 | 0,779 | +0,119 |
+| 6 s | 0,911 | 0,791 | +0,119 |
+| cheio | 0,929 | 0,791 | +0,137 |
+
+O vão continua aberto, mas **a escala inteira desce** — impostor incluído. O limiar
+passou a acompanhar a duração (`limiar_por_duracao`), e abaixo de **2,5 s não opina**:
++0,070 não dá para julgar. **Os 0,88 do áudio longo ficam intactos** — foram
+calibrados contra um impostor mais próximo (0,833) que o deste experimento, e é a
+medição conservadora que vale.
+
+### 4. `needs_review` não tinha saída
+
+`build` recusa capítulo com qualquer chunk fora de `ok`, então **um trecho de 2,5 s
+travava 17 min de entregável**. O caso: o nome "Jiddu Krishnamurti". O whisper small
+transcreveu o mesmo áudio como `Jidu-Criis-Namuji`, `Jidu-Klišnamurči` e
+`Jidu-Crišna-Murchi` — três decodificações foneticamente certas, ortograficamente
+diferentes. O CER media a grafia de um nome sânscrito, não a pronúncia; **nenhuma
+seed resolve**, porque o defeito não está no áudio.
+
+`review --aprovar <chunk_id>` aceita depois de um humano ouvir, e grava no banco que
+a decisão foi humana. `--regerar` devolve à fila.
+
+### Armadilha de cache que este teste revelou
+
+O `chunk_id` embute o **índice** do segmento (`ch01/00042-<hash>`). Uma entrada de
+léxico que muda o número de segmentos desloca todos os índices seguintes e
+**regenera o capítulo inteiro** — aqui, 131 de 133 chunks. A promessa de "corrigir um
+capítulo não regenera o livro" vale **entre** capítulos, não dentro de um. Num livro
+com capítulos de verdade o estrago é limitado ao capítulo editado; num texto de
+capítulo único, é tudo. Editar o léxico **antes** do primeiro `run` evita o retrabalho.
+
+### Sobre a taxa de regeneração no relatório
+
+O `report` deste projeto acusa 13,3%, fora do alvo de 5%. O número soma as **4
+execuções**, incluindo as duas que refizeram chunks só porque os limiares mudaram no
+meio da investigação. Não é a taxa de um run limpo.
+
+### Krishnamurti: o teste original rodou só com um trecho
 
 `projects/krishnamurti/` foi gerado a partir de `books/krishnamurti-trecho.txt`,
 que tem **1 KB** — três parágrafos, escolhidos para testar multivoz. O `ch01.mp3`
