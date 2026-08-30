@@ -62,9 +62,10 @@ Benchmark real (`bench/fase0_bench.py`, dados em `bench/out/bench.json`), RTX 50
 | Projeto (project.yaml, script.json, diff.md) | ✅ pronto | `src/audiofactory/project.py` |
 | CLI Typer | ✅ pronta | `src/audiofactory/cli/main.py` |
 | **Pack pt-BR dedicado** | ✅ **resolvido — é o padrão** | `engines/chatterbox_engine.py` |
-| Camada 2 do LLM + validador | ⬜ | `src/audiofactory/narration/llm.py` |
-| Subcomando `iam voice` (delega ao venv) | ⬜ | `ai-workspace/ai-stack/bin/iam` |
-| Voz clonada do Moises (Fase 5) | ⬜ | gravar referência, `voices/moises-v1/` |
+| Camada 2 do LLM + validador | ✅ pronta, testada com gemma4:12b real | `src/audiofactory/narration/llm.py` |
+| Subcomando `iam voice` | ✅ pronto | `ai-workspace/ai-stack/bin/iam` (`cmd_voice`) |
+| Registry de vozes (Fase 5) | ✅ código pronto e validado | `src/audiofactory/voices.py` |
+| **Gravar a voz do Moises** | ⬜ **PRÓXIMO — depende do usuário** | `iam voice voice record` |
 
 ## Detalhes que já foram decididos e não devem ser re-litigados
 
@@ -121,14 +122,29 @@ O chunk que eu havia atribuído a ruído do ASR era defeito real do genérico: e
 "Ou que os homens retornaram" onde o pack produz "Poucos homens retornaram". O custo é ~5% de
 RTF. Padrão do motor: `use_ptbr_pack=True`; `--no-ptbr-pack` desliga.
 
+## PRÓXIMO PASSO — gravar a voz de referência (Fase 5)
+
+Único item que depende do usuário. O código já está pronto e validado:
+
+```bash
+iam voice voice record                 # instruções + texto de calibração
+iam voice voice new moises-v1 --reference take2.wav
+iam voice voice test moises-v1         # sintetiza a calibração para escuta
+```
+
+O registry recusa referência curta (<20 s), com clipping, ou adulterada depois do
+registro (hash SHA-256 no `profile.yaml`) — porque nesse caso os conditionals e todo o
+áudio já gerado deixariam de ser reproduzíveis. `CONSENT.md` é obrigatório e gerado a
+partir de um modelo.
+
+Depois de registrada, basta `narrator: moises-v1` no `project.yaml`: o `run` resolve a
+referência pelo registry e `set_voice` congela os conditionals uma vez por livro.
+
 ## Depois disso
 
-1. **Camada 2 do LLM** (`narration/llm.py`): resolver os `AmbiguousSpan` marcados pelo
-   normalizador, via Ollama, com o validador do TDD §6.3 — só o span pode mudar, e os números da
-   expansão têm de bater com o original.
-2. **Fase 5 — voz própria**: gravar 60–90 s de referência, criar `voices/moises-v1/` com
-   `CONSENT.md`, e passar `--voice` ao `run` (`set_voice` já congela os conditionals por livro).
-3. `iam voice` em `ai-stack/bin/iam`, delegando ao venv — mesmo padrão da função `iamail()`.
+1. **Primeiro livro real** de domínio público, ponta a ponta, com a voz própria.
+2. **Fase 6**: 2 workers GPU (sobra VRAM — 3,5 de 16 GB), relatório de QA, `chapters.txt`.
+3. **V2**: música/trilha com ducking no Chapter Builder.
 
 ## Calibrações medidas (não re-derivar)
 
@@ -141,3 +157,10 @@ RTF. Padrão do motor: `use_ptbr_pack=True`; `--no-ptbr-pack` desliga.
 - Limiares: CER ≤ 0,05 aceita; ≤ 0,15 aceita a melhor de N (ruído do ASR); acima, `needs_review`.
   Falha de **duração** nunca é aceita por melhor-de-N — truncamento é defeito objetivo.
 - O TTS cru sai com true peak **+0,11 dBTP (clipando)**; o limiter da cadeia não é opcional.
+- **Pack pt-BR: CER 0,0125 vs 0,0274 do genérico** (2,2× melhor), mesmo VRAM, +5% de RTF.
+  É o padrão; `--no-ptbr-pack` desliga.
+- **Camada 2 (LLM)**: `gemma4:12b` gasta ~230 tokens raciocinando antes de responder —
+  `num_predict` precisa ser ≥600, senão devolve string vazia com `done_reason: length`.
+  Ela roda **antes** das regras (sobre o texto cru), senão os offsets ficam obsoletos.
+  A chave do cache inclui a palavra anterior: sem isso "Elizabeth II"→"Segunda"
+  contaminaria "Dom Pedro II"→"Segundo". Valor real da camada: concordância de gênero.

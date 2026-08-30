@@ -61,13 +61,22 @@ def script(slug: str, max_chars: int = 300,
 @app.command()
 def run(slug: str, chapters: str = typer.Option(None, help="ex.: 1,3-5"),
         no_qa: bool = typer.Option(False, "--no-qa"),
-        voice: Path = typer.Option(None, help="WAV de referência da voz"),
+        voice: Path = typer.Option(None, help="WAV de referência (sobrepõe o narrator)"),
         ptbr_pack: bool = typer.Option(True)):
     """Sintetiza os chunks pendentes. Retomar é o comportamento padrão."""
     p = _proj(slug)
     s = Script.load(p / "script.json")
+    ref = voice
+    if ref is None and s.voice_id not in ("default", None):
+        from ..voices import carregar
+
+        try:
+            ref = carregar(proj_mod.RAIZ, s.voice_id).referencia
+        except (FileNotFoundError, ValueError) as e:
+            console.print(f"[red]voz {s.voice_id}:[/] {e}")
+            raise typer.Exit(1)
     engine = ChatterboxEngine(s.params, use_ptbr_pack=ptbr_pack)
-    runner = Runner(p, s, engine, None if no_qa else Verifier(), voice_ref=voice)
+    runner = Runner(p, s, engine, None if no_qa else Verifier(), voice_ref=ref)
     novos, limpos = runner.sync()
     console.print(f"fila: +{novos} novos, {limpos} obsoletos/recuperados")
 
@@ -139,6 +148,78 @@ def export(slug: str, formato: str = "mp3"):
         destino = exportar(master, out / f"{wav.stem}.{formato}", formato,
                            {"title": cfg["titulo"], "album": cfg["titulo"]})
         console.print(f"[green]{destino}[/]")
+
+
+voice_app = typer.Typer(help="Registry de vozes do canal", no_args_is_help=True)
+app.add_typer(voice_app, name="voice")
+
+
+@voice_app.command("record")
+def voice_record():
+    """Instruções e texto de calibração para gravar a voz de referência."""
+    from ..voices import TEXTO_CALIBRACAO
+
+    console.print("[bold]Como gravar a referência[/] (TDD §7.2)\n")
+    for linha in [
+        "60–90 s de fala contínua, em [bold]tom de narração[/] — não de conversa",
+        "microfone fixo, sala com pouco eco (um closet com roupas funciona bem)",
+        "WAV 48 kHz / 24-bit mono · [bold]sem[/] compressor, EQ, denoise ou reverb",
+        "picos por volta de −6 dBFS: se clipar, o registro é recusado",
+        "grave [bold]3 takes[/] e escolha o melhor por teste cego com `voice test`",
+    ]:
+        console.print(f"  • {linha}")
+    console.print("\n[bold]Texto de calibração[/] (fonética variada — leia duas vezes):\n")
+    console.print(f"[italic]{TEXTO_CALIBRACAO}[/]\n")
+    console.print("Depois: [bold]iam voice voice new moises-v1 --reference take2.wav[/]")
+
+
+@voice_app.command("new")
+def voice_new(voice_id: str, reference: Path = typer.Option(..., "--reference"),
+              quem: str = typer.Option("Moises", help="nome no termo de consentimento")):
+    """Registra uma voz. Exige consentimento documentado."""
+    from ..voices import criar, modelo_consentimento
+
+    try:
+        v = criar(proj_mod.RAIZ, voice_id, reference.resolve(),
+                  consentimento=modelo_consentimento(voice_id, quem))
+    except ValueError as e:
+        console.print(f"[red]recusado:[/] {e}")
+        raise typer.Exit(1)
+    console.print(f"[green]voz registrada[/] {v.dir}")
+    console.print(f"assine o termo: {v.dir/'CONSENT.md'}")
+    console.print("[yellow]voices/ não é versionado — inclua no backup cifrado[/]")
+
+
+@voice_app.command("list")
+def voice_list():
+    """Lista as vozes registradas."""
+    from ..voices import listar
+
+    vozes = listar(proj_mod.RAIZ)
+    if not vozes:
+        console.print("nenhuma voz registrada — use [bold]voice record[/] para começar")
+        return
+    for v in vozes:
+        console.print(f"  {v}")
+
+
+@voice_app.command("test")
+def voice_test(voice_id: str, ptbr_pack: bool = True):
+    """Sintetiza o texto de calibração com a voz, para conferência auditiva."""
+    import soundfile as sf
+
+    from ..voices import TEXTO_CALIBRACAO, carregar
+
+    v = carregar(proj_mod.RAIZ, voice_id)
+    engine = ChatterboxEngine(v.params, use_ptbr_pack=ptbr_pack)
+    with console.status("carregando modelo…"):
+        engine.load()
+        engine.set_voice(v.referencia)
+    with console.status("sintetizando…"):
+        audio = engine.synthesize(TEXTO_CALIBRACAO, seed=v.params.seed or 1234)
+    destino = v.dir / "samples" / f"calibracao-{voice_id}.wav"
+    sf.write(str(destino), audio, engine.sample_rate)
+    console.print(f"[green]{destino}[/] ({len(audio)/engine.sample_rate:.1f}s) — ouça antes de usar")
 
 
 @app.command()
