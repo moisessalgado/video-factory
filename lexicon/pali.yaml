@@ -1,0 +1,39 @@
+# Léxico de pronúncia — termos em páli (TDD 6.4).
+#
+# Regra da casa: só entra o que o motor ERRA. Cada entrada abaixo foi verificada
+# sintetizando o termo num carreador e transcrevendo com o ASR. Os termos que o
+# Chatterbox já acerta ficaram DE FORA de propósito, para o léxico não virar
+# trabalho infinito:
+#   Dhamma -> "dama" · bhikkhus -> "bicus" · Brahma -> "brama" · Mara · devas
+#   Yama -> "Iama" · Nibbana
+#
+# Armadilhas do português que estas grafias contornam:
+#   - "s" entre vogais vira /z/; por isso "tússita" e "vassaváti" com "ss";
+#   - paroxítona é o padrão, então a tônica do páli precisa de acento explícito;
+#   - "ñ" do páli é exatamente o "nh" português.
+
+# Erra a vogal: "Sutta" saía "sota". O acento resolve.
+Sutta: súta
+sutta: súta
+
+# "ñ" lido como "ninha": Kondañña saía "condaninha", Añña saía "a linha".
+Kondañña: condánha
+Añña: ánha
+Añña-Kondañña: ánha-condánha
+
+# "s" entre vogais viraria /z/.
+Tusita: tússita
+
+# Saía "mimanarati" (n inicial virava m) e sem a tônica certa.
+Nimmanarati: nimánarati
+
+# Sem acento sairia paroxítona (ta-ta-GA-ta); a tônica do páli é a segunda.
+Tathagata: tatágata
+
+# Em páli "c" é /tʃ/, não /k/: "cakka" soa "tchaca", como em "chakra", e não
+# "caca". O motor lia a grafia crua como "Damakaka".
+Dhammacakkapavattana: dama tchaca pavátana
+
+# Termo composto, ocorre uma vez. O motor separa "para" como preposição de
+# qualquer forma; a grafia abaixo ao menos acerta os fonemas.
+Paranimmita-vasavatti: paranímita vassaváti

@@ -47,3 +47,60 @@ def test_nenhum_caractere_se_perde_na_divisao_em_capitulos():
     caps = detectar_capitulos(texto)
     for trecho in ("Autor da obra", "Epígrafe.", "Corpo um.", "Corpo dois."):
         assert any(trecho in corpo for _, corpo in caps), trecho
+
+
+# -- notas de rodape ----------------------------------------------------------
+
+def test_marcador_de_nota_de_rodape_e_removido():
+    """Caso real (Dhammacakkappavattana Sutta): "[1]" e "[2]" chegavam ao
+    normalizador e viravam "um" e "dois" no meio da narração."""
+    from audiofactory.ingest.loader import limpar
+
+    t = limpar("despegar desse mesmo desejo.[1]\n\nnas suas três fases, [2] não estava")
+    assert "[1]" not in t and "[2]" not in t
+    assert "desse mesmo desejo." in t
+    assert "três fases" in t
+
+
+def test_colchete_com_texto_nao_e_removido():
+    """Só marcador numérico sai; interpolação do tradutor é conteúdo."""
+    from audiofactory.ingest.loader import limpar
+
+    assert "[o Buda]" in limpar("Então ele [o Buda] disse.")
+
+
+# -- paragrafos curtos demais para sintetizar ---------------------------------
+
+def test_titulo_curto_e_fundido_ao_paragrafo_seguinte():
+    """Medido em dois livros: parágrafo isolado curto vira gibberish no TTS.
+    "Dhammacakkapavattana Sutta" sozinho saiu "Deu uma chaca pavada na sota";
+    com a linha seguinte junto, sai correto."""
+    from audiofactory.ingest.loader import paragrafos
+
+    ps = paragrafos("Dhammacakkapavattana Sutta\n\n"
+                    "Colocando a roda do Dhamma em movimento, disse ele.")
+    assert len(ps) == 1
+    assert ps[0].startswith("Dhammacakkapavattana Sutta Colocando")
+
+
+def test_varios_cacos_seguidos_viram_um_paragrafo_so():
+    from audiofactory.ingest.loader import paragrafos
+
+    ps = paragrafos("Autor\n\nTítulo\n\n1929\n\n" + "Corpo do texto com tamanho normal. " * 2)
+    assert len(ps) == 1
+
+
+def test_caco_no_fim_cola_no_anterior():
+    """Sem isto o último fragmento iria sozinho ao TTS, que é o caso ruim."""
+    from audiofactory.ingest.loader import paragrafos
+
+    ps = paragrafos("Corpo do texto com tamanho perfeitamente normal aqui.\n\nFim.")
+    assert len(ps) == 1 and ps[0].endswith("Fim.")
+
+
+def test_paragrafos_normais_nao_sao_fundidos():
+    from audiofactory.ingest.loader import paragrafos
+
+    ps = paragrafos("Primeiro parágrafo com tamanho normal e suficiente.\n\n"
+                    "Segundo parágrafo, também com tamanho normal.")
+    assert len(ps) == 2

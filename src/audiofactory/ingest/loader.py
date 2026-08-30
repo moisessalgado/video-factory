@@ -156,6 +156,9 @@ def limpar(texto: str) -> str:
     """Limpeza conservadora: nao reescreve prosa, so remove artefato de digitalizacao."""
     # de-hifenizacao de quebra de linha: "expedi-\ncao" -> "expedicao"
     texto = re.sub(r"(\w)-\n(\w)", r"\1\2", texto)
+    # marcadores de nota de rodape: "[1]", "[12]". Sem isto o normalizador os
+    # expande e a narracao ganha um "um" ou "doze" no meio da frase.
+    texto = re.sub(r"\[\d{1,3}\]", "", texto)
     # numeros de pagina isolados
     texto = re.sub(r"^\s*\d{1,4}\s*$", "", texto, flags=re.MULTILINE)
     # cabecalho/rodape repetido em CAIXA ALTA curto
@@ -203,5 +206,32 @@ def detectar_capitulos(texto: str) -> list[tuple[str, str]]:
     return caps or [("Texto completo", texto)]
 
 
-def paragrafos(corpo: str) -> list[str]:
-    return [p.strip() for p in re.split(r"\n\s*\n", corpo) if p.strip()]
+# Paragrafo isolado menor que isto e fundido ao seguinte. Medido em dois textos
+# diferentes: "Jiddu Krishnamurti" (18 chars) e "Dhammacakkapavattana Sutta"
+# (25 chars) viraram gibberish quando sintetizados sozinhos -- o Chatterbox
+# precisa de contexto. O mesmo termo, com a linha seguinte junto, sai correto.
+# E o mesmo limite do chunker (chunk/splitter.MIN_CHARS), que ja funde fragmentos
+# curtos DENTRO de um paragrafo; aqui a fusao e ENTRE paragrafos.
+MIN_PARAGRAFO = 30
+
+
+def paragrafos(corpo: str, min_chars: int = MIN_PARAGRAFO) -> list[str]:
+    """Paragrafos do corpo, com os curtos demais fundidos ao seguinte."""
+    brutos = [p.strip() for p in re.split(r"\n\s*\n", corpo) if p.strip()]
+    out: list[str] = []
+    pendente = ""
+    for par in brutos:
+        atual = f"{pendente} {par}".strip() if pendente else par
+        if len(atual) < min_chars:
+            # ainda curto: segura e tenta juntar com o proximo
+            pendente = atual
+            continue
+        pendente = ""
+        out.append(atual)
+    if pendente:
+        # sobrou um caco no fim: cola no ultimo, senao ele iria sozinho ao TTS
+        if out:
+            out[-1] = f"{out[-1]} {pendente}".strip()
+        else:
+            out.append(pendente)
+    return out
