@@ -4,12 +4,27 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+# Numero do capitulo por extenso. Lista FECHADA de proposito: com um `[a-zà-ú]+`
+# solto, "Livro dos dias" e "Parte de mim" viravam titulo de capitulo, e todo o
+# texto antes deles ia junto para outro capitulo.
+_ORDINAIS = (
+    "primeir|segund|terceir|quart|quint|sext|s[eé]tim|oitav|non|d[eé]cim|"
+    "und[eé]cim|duod[eé]cim|vig[eé]sim"
+)
+# O romano fica MAIUSCULO a ferro: o resto do padrao e IGNORECASE, e com isso o
+# "d" de "Livro dos dias" casava como numeral romano.
+_NUMERO_CAP = rf"(?-i:[IVXLCDM]+)|\d+|(?:{_ORDINAIS})[oa]|[úu]nic[oa]|final"
+
 # Titulos de capitulo em obras em portugues
 _CAPITULO = re.compile(
-    r"^\s*(cap[ií]tulo|cap\.|parte|livro|se[cç][aã]o)\s+"
-    r"([IVXLCDM]+|\d+|[a-zà-ú]+)\s*[-–—.:]?\s*(.*)$",
+    rf"^\s*(cap[ií]tulo|cap\.|parte|livro|se[cç][aã]o)\s+"
+    rf"({_NUMERO_CAP})\s*[-–—.:·]?\s*(.*)$",
     re.IGNORECASE)
-_TITULO_ROMANO = re.compile(r"^\s*([IVXLCDM]{1,7})\s*[-–—.:]?\s*(.{0,60})$")
+# O separador e OBRIGATORIO quando ha texto depois do numeral. Sem isso, "D" e um
+# romano valido e a linha "Discurso de Dissolucao" virava titulo de secao -- e como
+# I, V, X, L, C, D e M abrem meia lingua portuguesa ("Como", "Livro", "Vocês",
+# "Isso", "Minha"), qualquer paragrafo curto virava capitulo.
+_TITULO_ROMANO = re.compile(r"^\s*([IVXLCDM]{1,7})\s*(?:[-–—.:·]\s*(.{0,60}))?\s*$")
 
 
 def ler(path: Path) -> str:
@@ -174,6 +189,12 @@ def detectar_capitulos(texto: str) -> list[tuple[str, str]]:
         return [("Texto completo", texto)]
 
     caps = []
+    # O que vem ANTES do primeiro marco e conteudo: rosto, autor, epigrafe,
+    # nota de edicao. Sem isto ele era descartado em silencio -- o pior tipo de
+    # defeito neste pipeline, porque o audio sai correto e so falta um pedaco.
+    preambulo = "\n".join(linhas[:marcos[0][0]]).strip()
+    if preambulo:
+        caps.append(("Abertura", preambulo))
     for n, (ini, titulo) in enumerate(marcos):
         fim = marcos[n + 1][0] if n + 1 < len(marcos) else len(linhas)
         corpo = "\n".join(linhas[ini + 1:fim]).strip()
