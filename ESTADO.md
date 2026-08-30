@@ -61,7 +61,7 @@ Benchmark real (`bench/fase0_bench.py`, dados em `bench/out/bench.json`), RTX 50
 | Ingest TXT/EPUB + detecção de capítulos | ✅ pronto | `src/audiofactory/ingest/loader.py` |
 | Projeto (project.yaml, script.json, diff.md) | ✅ pronto | `src/audiofactory/project.py` |
 | CLI Typer | ✅ pronta | `src/audiofactory/cli/main.py` |
-| **Pack pt-BR dedicado** | ⚠️ **em aberto — ver abaixo** | `engines/chatterbox_engine.py` |
+| **Pack pt-BR dedicado** | ✅ **resolvido — é o padrão** | `engines/chatterbox_engine.py` |
 | Camada 2 do LLM + validador | ⬜ | `src/audiofactory/narration/llm.py` |
 | Subcomando `iam voice` (delega ao venv) | ⬜ | `ai-workspace/ai-stack/bin/iam` |
 | Voz clonada do Moises (Fase 5) | ⬜ | gravar referência, `voices/moises-v1/` |
@@ -95,33 +95,31 @@ HF_HOME=$PWD/models ./.venv/bin/audio-factory run bandeiras --no-ptbr-pack
 Verificado: CER médio 0,019 · resume após `running` órfão regenera **só** o chunk morto ·
 export bloqueado sem `rights:` · entregável medido em **−16,0 / −16,3 LUFS**.
 
-## PRÓXIMO PASSO — pack pt-BR dedicado (único item em aberto do motor)
+## Pack pt-BR — RESOLVIDO (é o padrão do motor)
 
-O `ResembleAI/Chatterbox-Multilingual-pt-br` **não é um checkpoint completo**. Publica só:
+O `ResembleAI/Chatterbox-Multilingual-pt-br` não é um checkpoint completo: publica só
+`t3_pt_br.safetensors`, `s3gen_v3.pt` e o tokenizer. `montar_ckpt_ptbr()` compõe por symlink
+um diretório com os nomes fixos que `from_local` exige, pegando do pack o que existe e do
+`ResembleAI/chatterbox` o que falta (`ve.pt`, `conds.pt`, `Cangjie5_TC.json`, `s3gen.pt`).
 
-```
-t3_pt_br.safetensors · s3gen_v3.pt · grapheme_mtl_merged_expanded_v1.json
-```
+Duas armadilhas já resolvidas, **não repita**:
+1. `snapshot_download` **sem `allow_patterns` puxa o repo inteiro** (vários GB de variantes
+   inúteis) e demora minutos. Use sempre a lista de arquivos.
+2. O `s3gen_v3.pt` do pack é de uma versão mais nova da lib e falha com
+   `Missing key(s): tokenizer._mel_filters, tokenizer.window`. **O vocoder vem do base** — o
+   refinamento pt-BR está no T3, e o s3gen é agnóstico ao idioma.
 
-Faltam `ve.pt` (voice encoder) e `conds.pt`, e os nomes divergem dos que `from_local` exige
-(fixos: `t3_mtl23ls_v2.safetensors`, `s3gen.pt`, `ve.pt`).
+**Ganho medido** (mesmos 5 chunks, mesma seed, QA com whisper small):
 
-`montar_ckpt_ptbr()` em `engines/chatterbox_engine.py` já implementa a composição por symlink
-(pack + o que falta do `ResembleAI/chatterbox`), **mas ainda não rodou até o fim** — o download do
-repo base é grande e foi interrompido. Retomar:
+| | genérico | pack pt-BR |
+|---|---|---|
+| CER médio | 0,0274 | **0,0125** (2,2× melhor) |
+| RTF | 0,291 | 0,305 |
+| VRAM | 3,49 GB | 3,49 GB |
 
-```bash
-cd /home/moises/dev/audio-factory
-HF_HOME=$PWD/models ./.venv/bin/python -c "
-import sys; sys.path.insert(0,'src')
-from audiofactory.engines.chatterbox_engine import montar_ckpt_ptbr
-print(montar_ckpt_ptbr())"
-HF_HOME=$PWD/models ./.venv/bin/audio-factory run bandeiras   # sem --no-ptbr-pack
-```
-
-Se o T3 refinado não casar com o s3gen/tokenizer do base, o fallback é o multilingual genérico
-(`--no-ptbr-pack`), **já validado e com qualidade pt-BR aprovada em escuta**. O pack é melhoria,
-não bloqueio.
+O chunk que eu havia atribuído a ruído do ASR era defeito real do genérico: ele produzia
+"Ou que os homens retornaram" onde o pack produz "Poucos homens retornaram". O custo é ~5% de
+RTF. Padrão do motor: `use_ptbr_pack=True`; `--no-ptbr-pack` desliga.
 
 ## Depois disso
 

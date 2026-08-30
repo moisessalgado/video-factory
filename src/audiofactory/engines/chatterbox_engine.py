@@ -20,20 +20,27 @@ REPO_BASE = "ResembleAI/chatterbox"
 # encoder (ve.pt) nem os conds.pt do modelo base, e usa outros nomes de arquivo.
 # `from_local` espera nomes fixos, entao montamos um diretorio composto:
 # arquivos do pack quando existem, do base quando faltam.
+# O refinamento pt-br esta no T3 (o modelo de linguagem/prosodia). O `s3gen_v3.pt`
+# que o pack traz e de uma versao mais nova da lib e nao casa com o S3Token2Wav
+# instalado ("Missing key(s): tokenizer._mel_filters, tokenizer.window"), entao o
+# vocoder vem do modelo base -- ele e agnostico ao idioma.
 _MAPA_PACK = {
     "t3_mtl23ls_v2.safetensors": "t3_pt_br.safetensors",
-    "s3gen.pt": "s3gen_v3.pt",
     "grapheme_mtl_merged_expanded_v1.json": "grapheme_mtl_merged_expanded_v1.json",
 }
-_DO_BASE = ("ve.pt", "conds.pt", "Cangjie5_TC.json")
+_DO_BASE = ("ve.pt", "conds.pt", "Cangjie5_TC.json", "s3gen.pt")
 
 
 def montar_ckpt_ptbr(cache_dir: Path | None = None) -> Path:
     """Compoe o checkpoint pt-br a partir do pack + o que falta do modelo base."""
     from huggingface_hub import snapshot_download
 
-    pack = Path(snapshot_download(repo_id=REPO_PTBR, repo_type="model"))
-    base = Path(snapshot_download(repo_id=REPO_BASE, repo_type="model"))
+    # allow_patterns e obrigatorio: sem ele o snapshot_download puxa o repo inteiro
+    # (varios GB de variantes que nao usamos) em vez dos 5 arquivos necessarios.
+    pack = Path(snapshot_download(repo_id=REPO_PTBR, repo_type="model",
+                                  allow_patterns=list(_MAPA_PACK.values())))
+    base = Path(snapshot_download(repo_id=REPO_BASE, repo_type="model",
+                                  allow_patterns=list(_DO_BASE)))
     destino = (cache_dir or pack.parent) / "composed-ptbr"
     destino.mkdir(parents=True, exist_ok=True)
 
