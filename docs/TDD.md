@@ -55,6 +55,8 @@ com resume após falha e relatório de QA. Sem música, sem vídeo, sem web UI.
 | F9 | Retomar processamento exatamente de onde parou após falha/interrupção |
 | F10 | Reportar status e progresso por projeto |
 | F11 | Permitir revisão manual e regeneração cirúrgica de um único chunk |
+| F12 | Gerar o MP4 exigido pelo YouTube, com imagem derivada do próprio sinal de áudio |
+| F13 | Mixar trilha instrumental sob a narração, com ducking pela própria voz |
 
 ### Não-funcionais
 | # | Requisito |
@@ -377,6 +379,24 @@ de-esser e EQ agressivo só **degradam**. A cadeia proposta é curta e defensáv
 
 Toda a cadeia é **FFmpeg** (já no sistema) — sem SoX, sem pydub, sem plugins.
 
+### 9.1 Trilha de fundo (F13)
+
+A trilha entra **depois** do master da narração, nunca antes: o `loudnorm` da narração
+precisa medir só a voz.
+
+| Etapa | Decisão | Justificativa |
+|---|---|---|
+| Origem | **Sintetizada pelo projeto** (`audio/musica.py`) | É a única trilha com licença inquestionável. O Content ID do YouTube reclama sozinho, e uma senoide não tem gravadora. Trilha de terceiro é aceita por caminho explícito, com aviso no `video` |
+| Forma | Drone modal, sem ritmo e sem melodia, ciclo de 4 acordes a cada 24 s | Melodia por baixo compete pela atenção; leito harmônico estático preenche o silêncio sem disputar |
+| Espectro | Duas camadas — grave abaixo da fundamental da voz e brilho 4 oitavas acima — com depressão de 15 dB na faixa da fala | **Medido nesta narração: 49,5% da energia entre 300 e 700 Hz, fundamental em 150 Hz.** A trilha é desenhada como complemento espectral, não como "música bonita sozinha" |
+| Nível | −26 LUFS antes do ducking | Audível na pausa sem mascarar consoante |
+| Ducking | `sidechaincompress` com a **narração como chave** | Nível fixo não serve: o que cabe na pausa é alto demais sob a fala. Medido: 5,9 dB de recuo, com a voz 28 dB acima da trilha durante a fala |
+| Narração | Entra em ganho unitário, **sem compressão** | Já saiu do `loudnorm` no alvo; comprimir de novo achataria a leitura |
+
+⚠️ **`asplit` é obrigatório** no grafo: a narração é consumida duas vezes (sinal e chave do
+sidechain) e o FFmpeg não ramifica sozinho. E a taxa de saída precisa ser **fixada com `-ar`** —
+o `loudnorm` reamostra para 192 kHz internamente, e sem isso o arquivo sai oito vezes maior.
+
 ---
 
 ## 10. Hardware / Performance Analysis
@@ -662,8 +682,11 @@ Moises, ponta a ponta.
 `script.json` + diff · chunker · Chatterbox pt-br com voz clonada · QA por ASR com retry · pausas +
 loudnorm + montagem · export MP3/WAV + `chapters.txt` · SQLite com resume · `iam voice` completa.
 
-**Fora:** música, efeitos, vídeo, web UI, múltiplos narradores, PDF com OCR pesado, streaming em tempo
-real, multi-GPU.
+**Fora:** efeitos sonoros, web UI, PDF com OCR pesado, streaming em tempo real, multi-GPU.
+
+**Entrou depois do MVP, a pedido do operador:** vídeo MP4 (F12) e trilha de fundo (F13) — sem
+eles não há publicação no YouTube, que é o destino do canal. Multivoz e PDF também entraram e
+estão entregues.
 
 **Definição de pronto:** um livro de ~5 h processado sem intervenção, com < 10 chunks em
 `needs_review`, entregue em MP3 −16 LUFS, e sobrevivendo a um `kill -9` no meio com retomada correta.
@@ -681,15 +704,21 @@ real, multi-GPU.
 | **4 — Qualidade** | Normalizador pt-BR completo, léxico, LLM restrito + validador, **QA por ASR com retry**, `review` | O diferencial do projeto | 4–6 dias |
 | **5 — Voz própria** | Gravação, `voice new`, conditionals congelados, verificação de similaridade, teste de consistência em 3 capítulos | Identidade estável do canal | 2–3 dias |
 | **6 — Produção** | Pós-processamento completo, export multi-formato, `chapters.txt`, relatório, 2 workers, `--free-ollama` | Primeiro audiolivro publicado | 2–4 dias |
-| **7 — V2/UI (opcional)** | Música/trilha (mixagem em ducking), FastAPI + HTML servido localmente sobre a mesma API | Só se a CLI virar gargalo real | — |
+| **7 — Publicação** | **MP4 com visualização gerada do áudio, trilha própria com ducking** | O entregável que o YouTube aceita | ✅ entregue |
+| **8 — UI (opcional)** | FastAPI + HTML servido localmente sobre a mesma API | Só se a CLI virar gargalo real | — |
 
 **Sobre a UI [OPINIÃO]:** vale, mas **só depois da Fase 6**, e só para o que a CLI faz mal — ouvir e
 aprovar chunks em `needs_review`. Uma página local com lista, waveform, texto e botão "regenerar"
 economiza tempo de verdade. Web UI para *lançar* processamento não economiza nada.
 
-**Música (V2):** a arquitetura já suporta — o `Chapter Builder` ganha uma trilha paralela com ducking
-(sidechain via FFmpeg) e trilhas de abertura/encerramento declaradas no preset. Não construir antes da
-narração estar sólida, e atenção redobrada à licença das músicas (Content ID do YouTube é implacável).
+**Música — ENTREGUE.** A previsão era usar trilha de terceiro com atenção à licença; a decisão foi
+outra e melhor: **o projeto gera a própria trilha**. O risco de Content ID some, e o desenho pôde
+ser feito sob medida para esta narração — a trilha é o complemento espectral da voz, medido, e não
+uma música escolhida por gosto. Trilha externa continua aceita, com aviso de licença.
+
+**Vídeo — ENTREGUE.** Três presets, todos derivados do próprio áudio via filtros do FFmpeg, sem
+dependência nova e sem arquivo de vídeo para licenciar. Renderiza a ~20× tempo real com `h264_nvenc`
+(9 min de áudio em 2,5 min). Aberturas/encerramentos declarados no preset continuam fora.
 
 ---
 
