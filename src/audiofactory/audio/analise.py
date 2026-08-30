@@ -42,6 +42,14 @@ CLIP_MAX_FRACAO = 1e-5
 # subindo ganho atras de sinal que nao existe.
 MODULACAO_MIN_DB = 5.0
 
+# Toda medida e feita na banda AUDIVEL. Sem isso, DC e infrassom entram em pico,
+# ruido, SNR e modulacao, e os numeros deixam de falar sobre a voz. Caso real
+# medido: uma gravacao com 97,5% da energia abaixo de 20 Hz reportava pico de
+# 0,0 dBFS e clipping -- tudo rumble, com a voz 30 dB abaixo disso.
+CORTE_SUBSONICO_HZ = 20.0
+# Fracao de energia subsonica que denuncia defeito de cabo/aterramento.
+RUMBLE_MAX_FRACAO = 0.30
+
 # Um microfone de headset Bluetooth (HFP) corta em 4 ou 8 kHz. Voz masculina tem
 # energia util ate ~12 kHz, e e a faixa de 8-14 kHz que da o "ar" da narracao.
 CORTE_MIN_HZ = 11000.0
@@ -62,6 +70,7 @@ class Take:
     clip_fracao: float
     corte_hz: float
     modulacao_db: float
+    rumble_fracao: float
 
     @property
     def sem_voz(self) -> bool:
@@ -72,6 +81,14 @@ class Take:
     def problemas(self) -> list[str]:
         """Falhas que tornam a referencia inadequada. Vazio = pode registrar."""
         p = []
+        if self.rumble_fracao > RUMBLE_MAX_FRACAO:
+            # Vem antes de tudo: o rumble come o headroom e faz o pico e o
+            # clipping mentirem sobre a voz.
+            return [f"{self.rumble_fracao*100:.0f}% da energia abaixo de "
+                    f"{CORTE_SUBSONICO_HZ:.0f} Hz — isso é rumble, não voz. "
+                    "Plugue mal encaixado, cabo passando perto da fonte ou "
+                    "problema de aterramento. Some o headroom todo e faz o pico "
+                    "parecer bom quando não está"]
         if self.sem_voz:
             # Diagnostico primeiro: os problemas de nivel abaixo sao consequencia,
             # e listar todos junto manda a pessoa mexer no ganho a toa.
@@ -121,9 +138,14 @@ def analisar(caminho: Path) -> Take:
 def analisar_audio(mono: np.ndarray, sr: int, canais: int = 1) -> Take:
     if mono.size == 0:
         raise ValueError("arquivo de áudio vazio")
-    pico = float(np.abs(mono).max())
+    # DC e clipping sao do sinal COMO GRAVADO -- e o conversor que satura, e o
+    # rumble satura junto. O resto das medidas usa so a banda audivel.
+    pico_bruto = float(np.abs(mono).max())
     clip = float((np.abs(mono) >= 0.99).mean())
     dc = float(abs(mono.mean()))
+    rumble = _fracao_subsonica(mono, sr)
+    mono = _passa_altas(mono, sr, CORTE_SUBSONICO_HZ)
+    pico = float(np.abs(mono).max())
 
     # Ruido de fundo: mediana das janelas mais silenciosas. Media nao serve --
     # uma unica pausa longa a puxaria para baixo e mascararia sala barulhenta.
@@ -147,7 +169,7 @@ def analisar_audio(mono: np.ndarray, sr: int, canais: int = 1) -> Take:
         duracao_s=len(mono) / sr,
         sample_rate=sr,
         canais=canais,
-        pico_db=_db(pico),
+        pico_db=_db(max(pico, 1e-12)),
         rms_db=_db(float(np.sqrt((mono.astype(np.float64) ** 2).mean()))),
         ruido_db=_db(ruido),
         snr_db=_db(fala) - _db(ruido),
@@ -155,7 +177,30 @@ def analisar_audio(mono: np.ndarray, sr: int, canais: int = 1) -> Take:
         clip_fracao=clip,
         corte_hz=corte_espectral(mono, sr),
         modulacao_db=modulacao,
+        rumble_fracao=rumble,
     )
+
+
+def _fracao_subsonica(mono: np.ndarray, sr: int,
+                     corte: float = CORTE_SUBSONICO_HZ) -> float:
+    """Energia entre 0 Hz (exclusive) e a faixa audivel.
+
+    O bin de 0 Hz fica de FORA porque offset DC e outro defeito, com outra causa
+    e outro conserto -- juntar os dois daria o diagnostico errado. Medido no caso
+    real: 1% em DC puro e 92% entre 0,1 e 10 Hz, com pico em 0,3 Hz. Deriva lenta
+    de linha de base e contato, nao conversor.
+    """
+    X = np.abs(np.fft.rfft((mono - mono.mean()).astype(np.float64))) ** 2
+    freqs = np.fft.rfftfreq(len(mono), 1 / sr)
+    total = X.sum()
+    return float(X[(freqs > 0) & (freqs < corte)].sum() / total) if total > 0 else 0.0
+
+
+def _passa_altas(mono: np.ndarray, sr: int, corte: float) -> np.ndarray:
+    """Passa-altas de fase zero por FFT. Suficiente para medir, e sem atraso."""
+    X = np.fft.rfft(mono.astype(np.float64))
+    X[np.fft.rfftfreq(len(mono), 1 / sr) < corte] = 0.0
+    return np.fft.irfft(X, len(mono)).astype(np.float32)
 
 
 def corte_espectral(mono: np.ndarray, sr: int, queda_db: float = QUEDA_DB) -> float:

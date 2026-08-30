@@ -25,6 +25,10 @@ def fala_sintetica(segundos=30.0, sr=SR, pico=0.5, ruido=1e-4, corte_hz=None,
     X = np.fft.rfft(x)
     f = np.maximum(np.fft.rfftfreq(n, 1 / sr), 1.0)
     X /= np.sqrt(f)
+    # Voz não tem energia abaixo do fundamental. Medido em 40 chunks narrados
+    # reais: 0,001% a 0,004% abaixo de 20 Hz. Sem este corte a fixture é ruído
+    # rosa puro, com 36% da energia no subsônico, e não representa fala.
+    X[f < 70.0] = 0.0
     if corte_hz:
         X[f > corte_hz] = 0.0            # microfone de banda estreita
     x = np.fft.irfft(X, n)
@@ -190,3 +194,32 @@ def test_fala_baixa_ainda_e_reconhecida_como_voz():
     t = analisar_audio(fala_sintetica(pico=0.03), SR)
     assert not t.sem_voz
     assert any("fraco demais" in p for p in t.problemas)
+
+
+# -- rumble subsonico ---------------------------------------------------------
+
+def com_rumble(base, sr=SR, nivel=6.0, hz=8.0):
+    """Fala boa somada a infrassom, como o caso real medido (97% da energia < 20 Hz)."""
+    t = np.arange(len(base)) / sr
+    return (base + np.sin(2 * np.pi * hz * t) * nivel * np.abs(base).max()).astype(np.float32)
+
+
+def test_pega_rumble_subsonico():
+    """Caso real: pico e clipping diziam que o ganho estava alto, mas o que
+    saturava era infrassom — a voz estava 30 dB abaixo disso."""
+    t = analisar_audio(com_rumble(fala_sintetica(pico=0.1)), SR)
+    assert t.rumble_fracao > 0.9
+    assert len(t.problemas) == 1 and "rumble" in t.problemas[0]
+
+
+def test_medidas_ignoram_o_subsonico():
+    """O pico medido tem de ser o da VOZ, não o do rumble somado a ela."""
+    limpa = fala_sintetica(pico=0.1)
+    a = analisar_audio(limpa, SR)
+    b = analisar_audio(com_rumble(limpa), SR)
+    assert abs(a.pico_db - b.pico_db) < 1.0
+    assert abs(a.modulacao_db - b.modulacao_db) < 2.0
+
+
+def test_gravacao_limpa_nao_acusa_rumble():
+    assert analisar_audio(fala_sintetica(pico=0.5), SR).rumble_fracao < 0.3

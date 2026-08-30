@@ -310,9 +310,11 @@ def _mostrar_take(take, titulo: str) -> bool:
     t.add_row("sinal/ruído", f"{take.snr_db:.1f} dB", f"> {SNR_MIN_DB:.0f} dB")
     t.add_row("banda útil", f"{take.corte_hz/1000:.1f} kHz", f"> {CORTE_MIN_HZ/1000:.0f} kHz")
     t.add_row("clipping", f"{take.clip_fracao*100:.3f}%", "0%")
-    from ..audio.analise import MODULACAO_MIN_DB
+    from ..audio.analise import MODULACAO_MIN_DB, RUMBLE_MAX_FRACAO
     t.add_row("modulação (voz?)", f"{take.modulacao_db:.1f} dB",
               f"> {MODULACAO_MIN_DB:.0f} dB")
+    t.add_row("energia < 20 Hz", f"{take.rumble_fracao*100:.1f}%",
+              f"< {RUMBLE_MAX_FRACAO*100:.0f}%")
     console.print(t)
     for a in take.avisos:
         console.print(f"[yellow]aviso:[/] {a}")
@@ -362,6 +364,8 @@ def voice_record(
         "microfone [bold]com fio[/], fixo, sala com pouco eco (um closet com roupas serve)",
         "WAV 48 kHz / 24-bit mono · [bold]sem[/] compressor, EQ, denoise ou reverb",
         "picos por volta de −6 dBFS: se clipar, o registro é recusado",
+        "[bold]deixe 2 s de silêncio[/] antes de começar a falar — é o que permite "
+        "medir o ruído da sala",
         "grave [bold]3 takes[/] e escolha o melhor por teste cego com `voice test`",
     ]:
         console.print(f"  • {linha}")
