@@ -202,10 +202,11 @@ class Runner:
                 qa = QAResult(True, 0.0, "", dur, len(texto) / dur if dur else 0.0)
             else:
                 qa = verifier.check(audio, engine.sample_rate, texto)
-            sim = (speaker.similaridade(audio, engine.sample_rate)
-                   if speaker is not None else None)
-            tentativas.append(Tentativa(audio, qa, seed, sim))
-            if not deve_repetir(qa, n, speaker_sim=sim):
+            voz_ok = sim = None
+            if speaker is not None:
+                voz_ok, sim = speaker.ok(audio, engine.sample_rate)
+            tentativas.append(Tentativa(audio, qa, seed, sim, voz_ok))
+            if not deve_repetir(qa, n, voz_ok=voz_ok):
                 break
         return escolher(tentativas), len(tentativas)
 

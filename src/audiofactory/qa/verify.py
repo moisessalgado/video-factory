@@ -19,13 +19,32 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# Ritmo de narracao medido em pt-BR: ~14-17 caracteres por segundo de audio.
-# Fora desta janela o chunk provavelmente foi truncado (rapido demais)
-# ou entrou em loop/arrasto (lento demais).
-CPS_MIN = 10.0
-CPS_MAX = 24.0
+# Duracao esperada = OVERHEAD fixo + texto / ritmo. O overhead (ataque, respiracao,
+# pausa final) NAO encolhe com o texto, entao um piso fixo de caracteres por segundo
+# reprova todo chunk curto que esta perfeito.
+#
+# Ajustado sobre 126 chunks aprovados do discurso do Krishnamurti (28 a 298 chars):
+#   dur = 0,83 s + chars / 15,4     (residuo: desvio-padrao 0,79 s)
+# Nessa amostra a razao dur/esperada ficou entre 0,79 e 1,30.
+OVERHEAD_S = 0.85
+CPS_NOMINAL = 15.4
+
+# Truncamento e o que esta checagem existe para pegar, e ele discrimina bem: cortar
+# metade de um chunk da razao ~0,50, longe do piso 0,79 observado.
+FATOR_MIN = 0.6
+
+# O lado "lento demais" e generoso de proposito. Medido: um titulo curto lido com
+# pausa deu razao 1,70 com CER 0,000 (audio correto), enquanto o arrasto real
+# documentado no ESTADO deu 1,54 -- as duas populacoes se sobrepoem, e duracao
+# sozinha nao as separa. Quem cuida de conteudo aqui e o CER; a duracao so barra
+# o que e grosseiro (loop de repeticao passa MUITO de 1,8).
+FATOR_MAX = 1.8
 
 CER_MAX = 0.05
+
+
+def duracao_esperada(texto: str) -> float:
+    return OVERHEAD_S + len(texto) / CPS_NOMINAL
 
 
 @dataclass
@@ -108,16 +127,20 @@ class Verifier:
               cer_max: float = CER_MAX) -> QAResult:
         dur = len(audio) / sample_rate
         cps = len(esperado) / dur if dur > 0 else float("inf")
+        prevista = duracao_esperada(esperado)
+        razao = dur / prevista
 
         # Duracao primeiro: e barata e pega o truncamento sem rodar o ASR.
         if dur < 0.2:
             return QAResult(False, 1.0, "", dur, cps, "audio vazio ou quase vazio")
-        if cps > CPS_MAX:
+        if razao < FATOR_MIN:
             return QAResult(False, 1.0, "", dur, cps,
-                            f"audio curto demais para o texto ({cps:.1f} c/s) - truncado?")
-        if cps < CPS_MIN:
+                            f"audio curto demais para o texto ({dur:.1f}s contra "
+                            f"{prevista:.1f}s previstos) - truncado?")
+        if razao > FATOR_MAX:
             return QAResult(False, 1.0, "", dur, cps,
-                            f"audio longo demais para o texto ({cps:.1f} c/s) - loop/arrasto?")
+                            f"audio longo demais para o texto ({dur:.1f}s contra "
+                            f"{prevista:.1f}s previstos) - loop/arrasto?")
 
         transcript = self.transcribe(audio, sample_rate)
         cer = char_error_rate(esperado, transcript)

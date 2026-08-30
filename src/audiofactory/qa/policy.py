@@ -25,7 +25,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .speaker import SIMILARIDADE_MINIMA
 from .verify import QAResult
 
 CER_ACEITE = 0.05
@@ -39,6 +38,9 @@ class Tentativa:
     qa: QAResult
     seed: int
     speaker_sim: float | None = None   # None = sem voz de referencia para comparar
+    # Veredito do SpeakerCheck, que e quem conhece o limiar (ele varia com a
+    # duracao). None = sem referencia, entao nao ha o que reprovar.
+    voz_ok: bool | None = None
 
 
 @dataclass
@@ -50,8 +52,7 @@ class Decisao:
 
 
 def escolher(tentativas: list[Tentativa], cer_aceite: float = CER_ACEITE,
-             cer_piso: float = CER_PISO,
-             sim_minima: float = SIMILARIDADE_MINIMA) -> Decisao:
+             cer_piso: float = CER_PISO) -> Decisao:
     """Decide entre as tentativas de um mesmo chunk."""
     if not tentativas:
         raise ValueError("nenhuma tentativa")
@@ -60,7 +61,7 @@ def escolher(tentativas: list[Tentativa], cer_aceite: float = CER_ACEITE,
     pool = validas or tentativas
     # Entre as que servem, prefira as que tambem batem a identidade da voz: nao
     # adianta o texto estar certo se o timbre mudou no meio do capitulo.
-    na_voz = [t for t in pool if _voz_ok(t, sim_minima)]
+    na_voz = [t for t in pool if t.voz_ok is not False]
     melhor = min(na_voz or pool, key=lambda t: t.qa.cer)
 
     if not validas:
@@ -82,11 +83,6 @@ def escolher(tentativas: list[Tentativa], cer_aceite: float = CER_ACEITE,
                    f"{len(tentativas)} tentativas")
 
 
-def _voz_ok(t: Tentativa, minima: float) -> bool:
-    """Sem referencia de voz (speaker_sim None) nao ha o que reprovar."""
-    return t.speaker_sim is None or t.speaker_sim >= minima
-
-
 def _falha_de_duracao(qa: QAResult) -> bool:
     return not qa.ok and ("truncado" in qa.reason or "loop" in qa.reason
                           or "vazio" in qa.reason)
@@ -94,10 +90,9 @@ def _falha_de_duracao(qa: QAResult) -> bool:
 
 def deve_repetir(qa: QAResult, tentativa: int, cer_aceite: float = CER_ACEITE,
                  max_tentativas: int = MAX_TENTATIVAS,
-                 speaker_sim: float | None = None,
-                 sim_minima: float = SIMILARIDADE_MINIMA) -> bool:
+                 voz_ok: bool | None = None) -> bool:
     if tentativa >= max_tentativas:
         return False
-    if speaker_sim is not None and speaker_sim < sim_minima:
+    if voz_ok is False:
         return True
     return not qa.ok or qa.cer > cer_aceite

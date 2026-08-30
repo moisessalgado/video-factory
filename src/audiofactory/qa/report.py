@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..audio.process import LUFS_ALVO, medir_loudness
 from ..qa.speaker import SIMILARIDADE_MINIMA as LIMIAR_VOZ
+from ..qa.speaker import limiar_por_duracao
 
 CER_ALVO = 0.02
 REGEN_ALVO = 0.05
@@ -91,12 +92,17 @@ def coletar(projeto: Path, store, medir_audio: bool = True) -> list[Metrica]:
                      _pct(rev, total) < REVIEW_ALVO,
                      f"{rev} em {total}"))
 
-    sims = [r["speaker_sim"] for r in store.conn.execute(
-        "SELECT speaker_sim FROM chunks WHERE speaker_sim IS NOT NULL")]
+    # O limiar acompanha a duracao do trecho, entao cada chunk e medido contra o
+    # SEU limiar -- comparar tudo com 0,88 reprovaria chunk curto que foi aceito.
+    medidos = store.conn.execute(
+        "SELECT speaker_sim, duration_s FROM chunks WHERE speaker_sim IS NOT NULL "
+        "AND duration_s IS NOT NULL").fetchall()
+    sims = [r["speaker_sim"] for r in medidos]
     if sims:
-        acima = sum(1 for s in sims if s >= LIMIAR_VOZ)
+        acima = sum(1 for r in medidos
+                    if r["speaker_sim"] >= limiar_por_duracao(r["duration_s"]))
         m.append(Metrica("Consistência de voz", _pct(acima, len(sims)),
-                         f"> 99% acima de {LIMIAR_VOZ}",
+                         f"> 99% acima do limiar ({LIMIAR_VOZ} em áudio longo)",
                          _pct(acima, len(sims)) >= VOZ_ALVO,
                          f"média {sum(sims)/len(sims):.3f} · pior {min(sims):.3f}"))
 

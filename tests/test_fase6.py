@@ -14,11 +14,13 @@ from audiofactory.ingest.loader import (_bordas_repetidas, _unir_linhas, detecta
                                         limpar, ler)
 from audiofactory.pipeline import _repartir
 from audiofactory.qa.policy import Tentativa, escolher, deve_repetir
+
+
 from audiofactory.qa.verify import QAResult
+
 
 AUDIO = np.zeros(2400, dtype=np.float32)
 QA_BOM = QAResult(True, 0.01, "", 1.0, 15.0)
-
 
 # -- ingest de PDF ------------------------------------------------------------
 
@@ -145,33 +147,35 @@ def test_um_worker_nao_reparte():
 # -- politica: identidade da voz entra no melhor-de-N -------------------------
 
 def test_prefere_a_tentativa_dentro_da_voz():
-    d = escolher([Tentativa(AUDIO, QA_BOM, 1, 0.879), Tentativa(AUDIO, QA_BOM, 2, 0.94)])
+    d = escolher([Tentativa(AUDIO, QA_BOM, 1, 0.879, False),
+                  Tentativa(AUDIO, QA_BOM, 2, 0.94, True)])
     assert d.aceito and d.melhor.speaker_sim == 0.94
 
 
 def test_reprova_quando_nenhuma_tentativa_bate_a_voz():
-    d = escolher([Tentativa(AUDIO, QA_BOM, 1, 0.80), Tentativa(AUDIO, QA_BOM, 2, 0.83)])
+    d = escolher([Tentativa(AUDIO, QA_BOM, 1, 0.80, False),
+                  Tentativa(AUDIO, QA_BOM, 2, 0.83, False)])
     assert not d.aceito and "voz divergente" in d.motivo
     assert d.melhor.speaker_sim == 0.83     # guarda a melhor, para a revisao humana
 
 
 def test_sem_referencia_de_voz_a_checagem_nao_reprova():
-    assert escolher([Tentativa(AUDIO, QA_BOM, 1, None)]).aceito
+    assert escolher([Tentativa(AUDIO, QA_BOM, 1, None, None)]).aceito
 
 
 def test_voz_baixa_pede_nova_seed():
-    assert deve_repetir(QA_BOM, 1, speaker_sim=0.87)
-    assert not deve_repetir(QA_BOM, 1, speaker_sim=0.95)
+    assert deve_repetir(QA_BOM, 1, voz_ok=False)
+    assert not deve_repetir(QA_BOM, 1, voz_ok=True)
 
 
 def test_nao_repete_alem_do_limite_de_tentativas():
-    assert not deve_repetir(QA_BOM, 3, speaker_sim=0.10)
+    assert not deve_repetir(QA_BOM, 3, voz_ok=False)
 
 
 def test_duracao_invalida_nao_e_salva_pela_similaridade():
     """Truncamento e defeito objetivo: voz perfeita nao o torna aceitavel."""
     truncado = QAResult(False, 1.0, "", 0.5, 60.0, "audio curto demais - truncado?")
-    d = escolher([Tentativa(AUDIO, truncado, 1, 0.99)])
+    d = escolher([Tentativa(AUDIO, truncado, 1, 0.99, True)])
     assert not d.aceito
 
 
