@@ -3,7 +3,7 @@
 Documento de handoff. **Leia primeiro [`docs/TDD.md`](docs/TDD.md)** — é o design aprovado e a
 justificativa de cada decisão. Este arquivo diz só onde a implementação parou.
 
-Atualizado: 2026-08-29.
+Atualizado: 2026-08-30.
 
 ## Ambiente (já provisionado)
 
@@ -71,6 +71,93 @@ Benchmark real (`bench/fase0_bench.py`, dados em `bench/out/bench.json`), RTX 50
 | Checagem de identidade da voz | ✅ pronta e validada contra impostores | `src/audiofactory/qa/speaker.py` |
 | Gravar a voz do Moises | ⏸️ adiado — melhoria de autenticidade, não bloqueio | `iam voice voice record` |
 
+## Fase 6 — CONCLUÍDA ✅
+
+| Entrega | Estado | Arquivo |
+|---|---|---|
+| Ingest de **PDF** (por blocos, sem OCR) | ✅ pronto e testado | `src/audiofactory/ingest/loader.py` |
+| `chapters.txt` + arquivo único contínuo | ✅ pronto | `cli/main.py` (`export`) |
+| Export multi-formato (`--formato mp3,aac`) | ✅ pronto | `cli/main.py` |
+| Relatório de QA contra os alvos do TDD | ✅ pronto | `src/audiofactory/qa/report.py` |
+| 2 workers na GPU | ✅ pronto, **ganho medido de 1,25×** | `pipeline.py` (`_repartir`) |
+| `--free-ollama` | ✅ pronto | `cli/main.py` (`_liberar_ollama`) |
+| Histórico de execuções (tabela `runs`) | ✅ pronto — é o RTF de relógio | `store/db.py` |
+| Testes automatizados da fase | ✅ 19 testes | `tests/test_fase6.py` |
+
+### PDF: extração por BLOCOS, não por linhas
+
+`ler_pdf()` usa `page.get_text("blocks")`. Reconstruir parágrafo a partir de
+pontuação erra sempre que uma frase termina no meio do parágrafo — e num PDF cada
+linha visual é uma quebra. O bloco do PyMuPDF já é, na prática, o parágrafo.
+
+Cabeçalho e rodapé saem por repetição: um bloco curto (≤ 80 chars) na borda da
+página que aparece em ≥ 30% das páginas é descartado. A chave de comparação apaga
+os dígitos, senão "Página 12" e "Página 13" nunca casariam.
+
+**Guarda que um teste obrigou a existir:** só entram na contagem páginas com ≥ 3
+blocos, e a janela de borda encolhe para 1 bloco em páginas curtas. Sem isso, numa
+página de dois blocos *todo* bloco é borda — e como a chave apaga dígitos, o corpo
+do livro ("Único parágrafo da página 3.") seria descartado como rodapé.
+
+PDF escaneado é **recusado com erro claro**: OCR está fora do escopo (TDD §17), e
+um OCR silencioso entregaria lixo ao TTS.
+
+### 2 workers: ganho real de 1,25×, não de 2×
+
+Medido em 46 chunks / 12,4 min de áudio, com QA ligada:
+
+| | 1 worker | 2 workers |
+|---|---|---|
+| Relógio de parede | 305 s | **244 s** |
+| RTF (parede/áudio) | 0,407 | **0,324** |
+| VRAM de pico | 6,6 GB | **10,5 GB** de 16 |
+
+**Não é 2×** porque o ASR de QA roda na CPU e a GPU já estava bem ocupada com um
+worker. E **em carga pequena 2 workers é mais LENTO**: em 9 chunks deu 48 s contra
+36 s de 1 worker — cada worker carrega o seu próprio modelo, e dois carregamentos
+não se pagam em 50 s de áudio. Regra prática: `--workers 2` só a partir de alguns
+minutos de áudio pendente.
+
+Cada worker tem modelo, ASR e conexão SQLite próprios. Modelo próprio é
+obrigatório: `set_voice` guarda os conditionals **dentro** do modelo, e dois
+workers compartilhando um trocariam a voz um do outro no meio do lote.
+`_repartir()` dá a cada worker fatias contíguas de cada voz, para que `set_voice`
+seja chamado uma vez por voz, não uma vez por chunk.
+
+### RTF passou a ser medido pelo relógio de parede
+
+A tabela `runs` (que existia no schema e nunca era usada) agora registra cada
+execução. O RTF do relatório é `parede / áudio` somado sobre as execuções, e
+**inclui a carga do modelo** — é o tempo que o operador espera de verdade. A soma
+de `gen_s` por chunk não serve: com 2 workers ela conta o mesmo intervalo duas
+vezes.
+
+### Identidade da voz entrou no melhor-de-N
+
+**Era um furo real:** a similaridade de voz era medida *depois* de escolher a
+melhor tentativa, então um chunk que só falhava na voz ia direto para
+`needs_review` sem que outra seed fosse tentada. Medido no teste do PDF: um chunk
+deu 0,879 (limiar 0,88) e passou com folga na seed seguinte.
+
+Agora a similaridade é medida **por tentativa**, dentro de `_gerar_com_qa`, e
+entra em `deve_repetir`/`escolher` como qualquer outro defeito. Reprovar por voz
+só acontece se **nenhuma** das 3 tentativas bater o limiar.
+
+### Loudness: o `loudnorm` sozinho não chega ao alvo
+
+Os masters saíam a **−16,4 / −16,5 LUFS**, na borda da tolerância de ±0,5 do TDD.
+Investigado filtro a filtro: **não é o limiter nem os fades** — é o próprio
+`loudnorm`. Quando o ganho necessário estouraria o true peak alvo (aqui: +8,8 dB
+sobre um material de −4,1 dBTP), ele abandona o modo linear e cai no dinâmico
+(`normalization_type: dynamic` na medição), e o resultado fica sistematicamente
+~0,5 LUFS abaixo mesmo com o `target_offset` aplicado.
+
+`_corrigir_ganho()` mede o master e corrige o resíduo com ganho linear (`volume`),
+com o limiter depois só como guarda de true peak. Ganho linear não altera
+dinâmica, então é seguro. **Medido depois da correção: −16,10 e −16,14 LUFS, TP
+−1,44.** O limiter também passou de −1,0 para `TP_ALVO` (−1,5), que era a
+inconsistência que sobrava na cadeia.
+
 ## Detalhes que já foram decididos e não devem ser re-litigados
 
 - **`num2words` pt_BR insere vírgula** ("mil, seiscentos e quarenta e oito") — `_num()` remove, senão
@@ -98,6 +185,25 @@ HF_HOME=$PWD/models ./.venv/bin/audio-factory run bandeiras --no-ptbr-pack
 
 Verificado: CER médio 0,019 · resume após `running` órfão regenera **só** o chunk morto ·
 entregável medido em **−16,0 / −16,3 LUFS**.
+
+**Ponta a ponta a partir de PDF** (Fase 6), verificado em 30/08/2026:
+
+```bash
+./.venv/bin/audio-factory new pdfteste --from livro.pdf --narrator narrador-v1
+./.venv/bin/audio-factory script pdfteste
+HF_HOME=$PWD/models ./.venv/bin/audio-factory run pdfteste --workers 2 --free-ollama
+./.venv/bin/audio-factory build pdfteste
+./.venv/bin/audio-factory export pdfteste --formato mp3,aac   # + chapters.txt
+./.venv/bin/audio-factory report pdfteste
+./.venv/bin/python -m pytest tests/ -q                        # 19 passam
+```
+
+Resultado: 9/9 chunks ok · CER médio 0,0048 · identidade de voz 0,928 (pior 0,886)
+· masters a **−16,10 / −16,14 LUFS**, TP −1,44 · `chapters.txt` com carimbos
+cumulativos + `pdfteste-completo.mp3`.
+
+`report` sai com **status 1** se alguma métrica ficar fora do alvo — dá para usar
+como portão antes de publicar.
 
 ## Pack pt-BR — RESOLVIDO (é o padrão do motor)
 
@@ -204,8 +310,18 @@ A decisão editorial sobre o que publicar é do operador do canal, não da ferra
 ## Depois disso
 
 1. **Primeiro livro real** de domínio público, ponta a ponta, com a `narrador-v1`.
-2. **Fase 6**: 2 workers GPU (sobra VRAM — 3,5 de 16 GB), relatório de QA, `chapters.txt`.
-3. **V2**: música/trilha com ducking no Chapter Builder.
+   É o único item que falta do MVP — o pipeline está completo.
+2. **V2**: música/trilha com ducking no Chapter Builder.
+3. **UI de revisão** (TDD §18, Fase 7): só se `needs_review` virar gargalo real.
+
+### Krishnamurti: o teste rodou só com um trecho
+
+`projects/krishnamurti/` foi gerado a partir de `books/krishnamurti-trecho.txt`,
+que tem **1 KB** — três parágrafos, escolhidos para testar multivoz. O `ch01.mp3`
+que está em `output/` é esse trecho, e é por isso que soa incompleto: **o texto é
+que está incompleto**, não o pipeline. Para o discurso inteiro basta substituir a
+fonte e rodar de novo; o `rights:` do projeto registra que a tradução é do site da
+KF e o status é `TESTE-LOCAL-NAO-PUBLICAR`.
 
 ## Calibrações medidas (não re-derivar)
 
