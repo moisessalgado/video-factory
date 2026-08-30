@@ -261,6 +261,52 @@ def report(slug: str, medir: bool = typer.Option(True, "--medir/--sem-medir",
         raise typer.Exit(1)
 
 
+@app.command()
+def video(slug: str,
+          preset: str = typer.Option("ondas", help="ondas, espectro ou estatico"),
+          musica: str = typer.Option("nenhuma",
+              help="'gerada' (trilha própria), 'nenhuma', ou caminho de um arquivo"),
+          capa: Path = typer.Option(None, help="imagem de fundo (sobrepõe o preset)"),
+          trilha_lufs: float = typer.Option(None, help="nível da trilha (padrão −26)"),
+          gpu: bool = typer.Option(True, "--gpu/--cpu")):
+    """Gera o MP4 para o YouTube, com trilha opcional sob a narração."""
+    from ..audio.musica import TRILHA_LUFS, mixar, preparar_trilha
+    from ..audio.process import duracao
+    from ..video.render import presets, renderizar
+
+    p = _proj(slug)
+    if preset not in presets():
+        console.print(f"[red]preset desconhecido:[/] {preset} — use {', '.join(presets())}")
+        raise typer.Exit(1)
+    masters = sorted((p / "output").glob("*-master.wav"))
+    if not masters:
+        console.print("[red]nenhum master[/] — rode `export` antes")
+        raise typer.Exit(1)
+
+    for master in masters:
+        audio = master
+        if musica != "nenhuma":
+            fonte = None if musica == "gerada" else Path(musica).resolve()
+            if fonte is not None and not fonte.exists():
+                console.print(f"[red]trilha não encontrada:[/] {fonte}")
+                raise typer.Exit(1)
+            if fonte is not None:
+                console.print("[yellow]trilha de terceiro:[/] confira a licença antes de "
+                              "publicar — o Content ID do YouTube reclama sozinho")
+            with console.status("preparando a trilha…"):
+                tr = preparar_trilha(p / "cache" / f"{master.stem}-trilha.wav",
+                                     duracao(master), fonte)
+                audio = p / "cache" / f"{master.stem}-com-trilha.wav"
+                mixar(master, tr, audio, trilha_lufs=trilha_lufs or TRILHA_LUFS)
+
+        destino = p / "output" / f"{master.stem.replace('-master','')}.mp4"
+        with console.status(f"renderizando {destino.name}…"):
+            renderizar(audio, destino, preset=preset, capa=capa, gpu=gpu)
+        console.print(f"[green]{destino}[/] ({destino.stat().st_size/1e6:.0f} MB)")
+
+    console.print("[dim]lembre do disclosure de conteúdo sintético ao publicar[/]")
+
+
 voice_app = typer.Typer(help="Registry de vozes do canal", no_args_is_help=True)
 app.add_typer(voice_app, name="voice")
 
