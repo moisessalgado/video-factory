@@ -265,17 +265,36 @@ voice_app = typer.Typer(help="Registry de vozes do canal", no_args_is_help=True)
 app.add_typer(voice_app, name="voice")
 
 
-def _dispositivos_captura() -> list[tuple[str, str]]:
-    """Entradas ALSA disponíveis, como (device, descrição)."""
+def _dispositivos_captura() -> list[tuple[str, str, str]]:
+    """Entradas de captura, como (backend, device, descrição).
+
+    PipeWire primeiro: quando ele está rodando, ele abre a placa em modo
+    exclusivo, e gravar direto de `hw:X,Y` falha com "Device or resource busy".
+    ALSA cru fica como reserva para máquina sem servidor de áudio.
+    """
+    import json
     import re
     import subprocess
 
-    saida = subprocess.run(["arecord", "-l"], capture_output=True, text=True).stdout
+    try:
+        dump = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=10)
+        nos = json.loads(dump.stdout)
+    except (FileNotFoundError, ValueError, subprocess.SubprocessError):
+        nos = []
     achados = []
+    for n in nos:
+        props = ((n.get("info") or {}).get("props") or {})
+        if props.get("media.class") == "Audio/Source" and props.get("node.name"):
+            achados.append(("pulse", props["node.name"],
+                            props.get("node.description") or props["node.name"]))
+    if achados:
+        return achados
+
+    saida = subprocess.run(["arecord", "-l"], capture_output=True, text=True).stdout
     for m in re.finditer(r"^card (\d+): (\S+) \[([^\]]+)\], device (\d+): ([^\[]+)",
                          saida, re.MULTILINE):
         card, _, desc, dev, nome = m.groups()
-        achados.append((f"hw:{card},{dev}", f"{desc} — {nome.strip()}"))
+        achados.append(("alsa", f"hw:{card},{dev}", f"{desc} — {nome.strip()}"))
     return achados
 
 
@@ -328,8 +347,8 @@ def voice_record(
         if not entradas:
             console.print("[red]nenhuma entrada de captura ALSA encontrada[/]")
             raise typer.Exit(1)
-        for dev, desc in entradas:
-            console.print(f"  [bold]{dev}[/]  {desc}")
+        for backend, dev, desc in entradas:
+            console.print(f"  [bold]{dev}[/]  [dim]({backend})[/]  {desc}")
         console.print("\n[yellow]Não use microfone de headset Bluetooth:[/] o perfil "
                       "HFP corta a banda em 8 kHz e aplica denoise que não se desliga.")
         return
@@ -352,10 +371,14 @@ def voice_record(
         console.print("Já tem o arquivo? [bold]iam voice voice check take1.wav[/]")
         return
 
-    dispositivo = dispositivo or (entradas[0][0] if entradas else None)
-    if dispositivo is None:
+    if not entradas:
         console.print("[red]nenhuma entrada de captura encontrada[/]")
         raise typer.Exit(1)
+    backend, padrao, _ = entradas[0]
+    if dispositivo:
+        backend = "alsa" if dispositivo.startswith("hw:") else backend
+    dispositivo = dispositivo or padrao
+
     saida.parent.mkdir(parents=True, exist_ok=True)
     console.print(f"gravando de [bold]{dispositivo}[/] por {segundos}s em {saida}")
     with console.status("3…"):
@@ -363,8 +386,9 @@ def voice_record(
     console.print("[bold green]FALE AGORA[/]")
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-         "-f", "alsa", "-ar", "48000", "-ac", "2", "-i", dispositivo,
-         "-t", str(segundos), "-ac", "1", "-c:a", "pcm_s24le", str(saida)],
+         "-f", backend, "-i", dispositivo,
+         "-t", str(segundos), "-ar", "48000", "-ac", "1", "-c:a", "pcm_s24le",
+         str(saida)],
         capture_output=True, text=True)
     if proc.returncode != 0:
         console.print(f"[red]falha na gravação:[/] {proc.stderr.strip()[:300]}")
