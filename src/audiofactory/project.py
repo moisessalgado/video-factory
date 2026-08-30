@@ -13,10 +13,10 @@ from .script.models import Chapter, Rights, Script, Segment, SynthParams
 
 RAIZ = Path(__file__).resolve().parents[2]
 
-# Lista de PERMITIDOS, nunca de proibidos: qualquer status desconhecido bloqueia a
-# exportacao. A versao anterior so recusava o placeholder, entao um status escrito
-# à mão -- inclusive "TESTE-LOCAL-NAO-PUBLICAR" -- passava e gerava o MP3.
-RIGHTS_PERMITIDOS = {"dominio-publico", "proprio", "licenciado"}
+# Valores convencionais de `rights.status`. Servem para consulta e para o registro
+# no project.yaml -- NAO sao uma autorizacao: o export nao e bloqueado por eles.
+# A decisao editorial sobre o que publicar e do operador do canal, nao da ferramenta.
+RIGHTS_CONHECIDOS = {"dominio-publico", "proprio", "licenciado", "teste-local"}
 
 
 def dir_projeto(slug: str, raiz: Path | None = None) -> Path:

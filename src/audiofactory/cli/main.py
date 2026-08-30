@@ -40,7 +40,8 @@ def new(slug: str, fonte: Path = typer.Option(..., "--from"),
     """Cria um projeto a partir de um arquivo de texto."""
     p = proj_mod.criar(slug, fonte.resolve(), narrator, titulo=titulo)
     console.print(f"[green]projeto criado[/] {p}")
-    console.print("[yellow]preencha o campo `rights:` em project.yaml antes de exportar[/]")
+    console.print("[dim]opcional: preencha `rights:` em project.yaml para registrar "
+                  "a procedência do texto[/]")
 
 
 @app.command()
@@ -151,13 +152,9 @@ def export(slug: str, formato: str = "mp3"):
     p = _proj(slug)
     cfg = proj_mod.carregar_config(p)
     status = (cfg.get("rights") or {}).get("status")
-    if status not in proj_mod.RIGHTS_PERMITIDOS:
-        console.print(f"[red]export bloqueado[/] — `rights.status` = {status!r}")
-        console.print("Valores que liberam a exportação: " +
-                      ", ".join(sorted(proj_mod.RIGHTS_PERMITIDOS)))
-        console.print("[dim]Qualquer outro valor é tratado como não liberado. "
-                      "Isso é proposital: ver TDD §14.3.[/]")
-        raise typer.Exit(1)
+    # `rights` é registro de procedência, não autorização: o export nunca é
+    # bloqueado por ele. A decisão sobre o que publicar é do operador.
+    console.print(f"[dim]direitos declarados: {status or '(não preenchido)'}[/]")
     out = p / "output"
     for wav in sorted((p / "audio" / "chapters").glob("*.wav")):
         master = out / f"{wav.stem}-master.wav"

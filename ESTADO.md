@@ -93,12 +93,11 @@ cd /home/moises/dev/audio-factory
 HF_HOME=$PWD/models ./.venv/bin/audio-factory run bandeiras --no-ptbr-pack
 ./.venv/bin/audio-factory status bandeiras
 ./.venv/bin/audio-factory build bandeiras
-# preencher rights: em projects/bandeiras/project.yaml, senão o export é bloqueado
 ./.venv/bin/audio-factory export bandeiras
 ```
 
 Verificado: CER médio 0,019 · resume após `running` órfão regenera **só** o chunk morto ·
-export bloqueado sem `rights:` · entregável medido em **−16,0 / −16,3 LUFS**.
+entregável medido em **−16,0 / −16,3 LUFS**.
 
 ## Pack pt-BR — RESOLVIDO (é o padrão do motor)
 
@@ -191,12 +190,16 @@ Três decisões que o teste real impôs:
 
 O `chunk_id` embute a voz: trocar a voz de um papel invalida só os chunks daquele papel.
 
-## `rights.status` é uma lista de PERMITIDOS
+## `rights` é registro, não autorização
 
-`RIGHTS_PERMITIDOS = {dominio-publico, proprio, licenciado}` em `project.py`. Qualquer
-outro valor bloqueia o export. A versão anterior só recusava o placeholder `PREENCHER`,
-então um status escrito à mão passava — inclusive um que dizia literalmente
-"TESTE-LOCAL-NAO-PUBLICAR", que gerou o MP3 de um texto protegido antes de eu perceber.
+**Decisão do operador (2026-08-30): o export não é bloqueado por `rights.status`.**
+O campo continua no `project.yaml` como registro de procedência — útil para o próprio
+histórico e para os metadados —, e o `export` apenas ecoa o valor declarado.
+
+A decisão editorial sobre o que publicar é do operador do canal, não da ferramenta.
+**Não reintroduza um gate aqui** sem que ele peça: já foi removido deliberadamente.
+
+`RIGHTS_CONHECIDOS` em `project.py` lista só os valores convencionais, para consulta.
 
 ## Depois disso
 

@@ -589,9 +589,13 @@ Escopo declarado: **domínio público + textos próprios + traduções/adaptaç�
 | Edições críticas/anotadas | Notas, prefácios e fixação de texto podem ter proteção própria | 🟡 Preferir edições limpas |
 | Obras protegidas | Fora do escopo sem licença escrita | 🔴 |
 
-**Mecanismo no sistema:** `project.yaml` tem campo obrigatório `rights:` com `{status, autor,
-ano_morte, tradutor, fonte, verificado_em}`. `iam voice export` **recusa** exportar projeto sem esse
-campo preenchido. Procedência vira parte do artefato, não memória.
+**Mecanismo no sistema:** `project.yaml` tem o campo `rights:` com `{status, autor, ano_morte,
+tradutor, fonte, verificado_em}` — **registro de procedência, não autorização**. Procedência vira
+parte do artefato, não memória.
+
+> **Revisão de 2026-08-30 (decisão do operador):** a versão original bloqueava o `export` sem
+> `rights` preenchido. Isso foi **removido** a pedido do operador: a decisão sobre o que publicar
+> é dele, não da ferramenta. O `export` hoje apenas ecoa o status declarado.
 
 ### 14.4 YouTube
 
