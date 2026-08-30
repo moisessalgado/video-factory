@@ -89,6 +89,8 @@ class Verifier:
         self.model = None
 
     def load(self) -> None:
+        if self.model is not None:      # idempotente: o worker chama sem saber
+            return
         from faster_whisper import WhisperModel
 
         self.model = WhisperModel(self.model_size, device=self.device,

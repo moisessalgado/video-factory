@@ -136,6 +136,28 @@ class Store:
             c.execute("UPDATE chunks SET state='pending', attempts=0 WHERE chunk_id=?",
                       (chunk_id,))
 
+    # -- historico de execucoes ------------------------------------------------
+
+    def begin_run(self, engine: str, voice_id: str | None, workers: int = 1) -> int:
+        """Abre um registro de execucao. O relogio de parede daqui e o RTF real."""
+        with self.tx() as c:
+            cur = c.execute(
+                "INSERT INTO runs(engine, voice_id, n_ok, n_failed) VALUES (?,?,0,0)",
+                (f"{engine} x{workers}", voice_id))
+            return cur.lastrowid
+
+    def end_run(self, run_id: int, n_ok: int, n_failed: int, audio_s: float,
+                gen_s: float) -> None:
+        with self.tx() as c:
+            c.execute("UPDATE runs SET finished_at=CURRENT_TIMESTAMP, n_ok=?, "
+                      "n_failed=?, audio_s=?, gen_s=? WHERE id=?",
+                      (n_ok, n_failed, audio_s, gen_s, run_id))
+
+    def runs(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT *, (julianday(finished_at)-julianday(started_at))*86400 AS parede_s "
+            "FROM runs WHERE finished_at IS NOT NULL ORDER BY id").fetchall()
+
     def stats(self) -> dict:
         rows = self.conn.execute(
             "SELECT state, COUNT(*) n, COALESCE(SUM(duration_s),0) d "

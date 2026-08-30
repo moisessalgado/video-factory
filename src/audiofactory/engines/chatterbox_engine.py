@@ -74,6 +74,8 @@ class ChatterboxEngine(TTSEngine):
         self.version = "chatterbox-mtl-v3-ptbr" if use_ptbr_pack else "chatterbox-mtl-v3"
 
     def load(self) -> None:
+        if self.model is not None:      # idempotente: o worker chama sem saber
+            return
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
         if self.ckpt_dir is not None:
