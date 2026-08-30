@@ -223,3 +223,20 @@ def test_medidas_ignoram_o_subsonico():
 
 def test_gravacao_limpa_nao_acusa_rumble():
     assert analisar_audio(fala_sintetica(pico=0.5), SR).rumble_fracao < 0.3
+
+
+# -- pico robusto a estalo ----------------------------------------------------
+
+def test_estalo_isolado_nao_define_o_pico():
+    """Caso real: fala a -45 dBFS reportava pico de -1,0 por causa de um clique
+    no início. O nível medido tem de ser o da fala, não o do estalo."""
+    x = fala_sintetica(pico=0.01)          # fala baixa, ~-40 dBFS
+    x[1000] = 0.9                          # um estalo isolado
+    t = analisar_audio(x, SR)
+    assert t.pico_db < -25, t.pico_db
+    assert any("fraco demais" in p for p in t.problemas)
+
+
+def test_pico_de_fala_continua_e_medido():
+    t = analisar_audio(fala_sintetica(pico=0.5), SR)
+    assert -12 < t.pico_db < -2, t.pico_db

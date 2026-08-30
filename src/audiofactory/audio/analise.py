@@ -141,11 +141,16 @@ def analisar_audio(mono: np.ndarray, sr: int, canais: int = 1) -> Take:
     # DC e clipping sao do sinal COMO GRAVADO -- e o conversor que satura, e o
     # rumble satura junto. O resto das medidas usa so a banda audivel.
     pico_bruto = float(np.abs(mono).max())
+
     clip = float((np.abs(mono) >= 0.99).mean())
     dc = float(abs(mono.mean()))
     rumble = _fracao_subsonica(mono, sr)
     mono = _passa_altas(mono, sr, CORTE_SUBSONICO_HZ)
-    pico = float(np.abs(mono).max())
+    # Percentil, nao maximo: um unico estalo (o plugue, a boca, o inicio da
+    # gravacao) define o maximo e faz um take de fala baixa parecer no nivel
+    # certo. Medido: um take com fala entre -41 e -50 dBFS reportava pico de
+    # -1,0 dBFS por causa de um clique nos primeiros 2 s.
+    pico = float(np.percentile(np.abs(mono), 99.99))
 
     # Ruido de fundo: mediana das janelas mais silenciosas. Media nao serve --
     # uma unica pausa longa a puxaria para baixo e mascararia sala barulhenta.

@@ -51,7 +51,8 @@ def raiz_vozes(raiz: Path) -> Path:
 
 
 def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None = None,
-          params: SynthParams | None = None, template_de: str | None = None) -> Voz:
+          params: SynthParams | None = None, template_de: str | None = None,
+          forcar: bool = False) -> Voz:
     """Registra uma voz a partir de um WAV de referencia.
 
     `template_de` marca uma voz SINTETICA (ex.: amostra do Kokoro usada como
@@ -59,6 +60,7 @@ def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None
     CONSENT.md grava-se PROVENANCE.md dizendo de onde a voz veio e sob qual licenca
     -- a exigencia de rastreabilidade continua, muda so a natureza do documento.
     """
+    ressalvas: list[str] = []
     audio, sr = sf.read(str(referencia), dtype="float32")
     dur = len(audio) / sr
     if template_de and dur < MIN_SEGUNDOS:
@@ -76,9 +78,13 @@ def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None
         from .audio.analise import analisar
 
         take = analisar(referencia)
-        if take.problemas:
+        if take.problemas and not forcar:
             raise ValueError("gravação inadequada como referência:\n  - "
                              + "\n  - ".join(take.problemas))
+        # `forcar` nao apaga o defeito: ele fica gravado no profile.yaml. Uma voz
+        # e um diretorio auditavel, e "por que essa voz soa assim?" precisa ter
+        # resposta seis meses depois.
+        ressalvas = take.problemas if forcar else []
     elif pico > 0.99:
         raise ValueError("referência com clipping — regrave com mais headroom (-6 dBFS)")
 
@@ -111,6 +117,7 @@ def criar(raiz: Path, voice_id: str, referencia: Path, consentimento: str | None
         "pico": round(pico, 3),
         "tipo": "template" if template_de else "pessoa",
         "origem": template_de,
+        "ressalvas": ressalvas if not template_de else [],
         "params": p.model_dump(),
     }, allow_unicode=True, sort_keys=False), encoding="utf-8")
 

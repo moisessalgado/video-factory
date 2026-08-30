@@ -391,19 +391,39 @@ def voice_record(
     with console.status("3…"):
         subprocess.run(["sleep", "3"])
     console.print("[bold green]FALE AGORA[/]")
+    bruto = saida.with_suffix(".bruto.wav")
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
          "-f", backend, "-i", dispositivo,
          "-t", str(segundos), "-ar", "48000", "-ac", "1", "-c:a", "pcm_s24le",
-         str(saida)],
+         str(bruto)],
         capture_output=True, text=True)
     if proc.returncode != 0:
+        bruto.unlink(missing_ok=True)
         console.print(f"[red]falha na gravação:[/] {proc.stderr.strip()[:300]}")
         raise typer.Exit(1)
 
-    from ..audio.analise import analisar
+    from ..audio.analise import CORTE_SUBSONICO_HZ, RUMBLE_MAX_FRACAO, analisar
+
+    # O subsônico é medido no sinal CRU e depois removido. Medido nesta máquina:
+    # a captura do ALC897 tem deriva lenta abaixo de 20 Hz mesmo sem nada plugado,
+    # e ela some do arquivo com um passa-altas. Não é processar a voz -- é tirar o
+    # que não é som, e a cadeia de masterização já corta em 65 Hz de qualquer jeito.
+    cru = analisar(bruto)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(bruto), "-af", f"highpass=f={CORTE_SUBSONICO_HZ:.0f}",
+                    "-c:a", "pcm_s24le", str(saida)], capture_output=True, text=True)
+    bruto.unlink(missing_ok=True)
 
     console.print()
+    if cru.rumble_fracao > RUMBLE_MAX_FRACAO:
+        console.print(f"[dim]sinal cru tinha {cru.rumble_fracao*100:.0f}% de energia "
+                      f"abaixo de {CORTE_SUBSONICO_HZ:.0f} Hz — removida no arquivo "
+                      f"final[/]")
+        if cru.clip_fracao > 0:
+            console.print("[yellow]atenção:[/] esse subsônico chegou a saturar o "
+                          "conversor. Baixe o ganho de entrada — o corte não desfaz "
+                          "o que já clipou")
     if not _mostrar_take(analisar(saida), f"Análise — {saida.name}"):
         raise typer.Exit(1)
     console.print(f"\nRegistre: [bold]iam voice voice new moises-v1 --reference {saida}[/]")
@@ -411,17 +431,22 @@ def voice_record(
 
 @voice_app.command("new")
 def voice_new(voice_id: str, reference: Path = typer.Option(..., "--reference"),
-              quem: str = typer.Option("Moises", help="nome no termo de consentimento")):
+              quem: str = typer.Option("Moises", help="nome no termo de consentimento"),
+              forcar: bool = typer.Option(False, "--forcar",
+                  help="registra apesar dos defeitos medidos, que ficam no profile.yaml")):
     """Registra uma voz. Exige consentimento documentado."""
     from ..voices import criar, modelo_consentimento
 
     try:
         v = criar(proj_mod.RAIZ, voice_id, reference.resolve(),
-                  consentimento=modelo_consentimento(voice_id, quem))
+                  consentimento=modelo_consentimento(voice_id, quem), forcar=forcar)
     except ValueError as e:
         console.print(f"[red]recusado:[/] {e}")
         raise typer.Exit(1)
     console.print(f"[green]voz registrada[/] {v.dir}")
+    if forcar:
+        console.print("[yellow]registrada com ressalvas[/] — os defeitos medidos "
+                      f"ficaram anotados em {v.dir/'profile.yaml'}")
     console.print(f"assine o termo: {v.dir/'CONSENT.md'}")
     console.print("[yellow]voices/ não é versionado — inclua no backup cifrado[/]")
 
