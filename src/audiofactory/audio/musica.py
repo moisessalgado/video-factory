@@ -19,9 +19,19 @@ import numpy as np
 
 SAMPLE_RATE = 24000
 
-# Nivel da trilha sob a narracao. -26 LUFS deixa a musica audivel sem mascarar
-# consoantes; o ducking abaixa mais ainda enquanto ha fala.
-TRILHA_LUFS = -26.0
+# Nivel da trilha sob a narracao; o ducking abaixa mais ainda enquanto ha fala.
+#
+# O caminho ate este numero vale ser lembrado. Medindo uma gravacao do mesmo
+# sutta que o operador aprovou (recitacao em pali), a trilha de la fica 12,2 dB
+# abaixo da fala, e isso levou a subir daqui para -20. O operador ouviu e pediu o
+# contrario: mais baixa. A referencia media outro conteudo -- canto com pausas de
+# 5 s, onde a musica tem espaco para existir sozinha. Sob prosa continua em
+# portugues, o mesmo nivel atrapalha.
+#
+# -29,5 e escolha de ouvido do operador entre tres opcoes medidas (-23,5, -26 e
+# -29,5), e nao vem de nenhum alvo numerico. Medicao serviu para OFERECER as
+# opcoes em passos conhecidos; quem decidiu foi a escuta.
+TRILHA_LUFS = -29.5
 DUCK_REDUCAO_DB = 9.0
 
 # Grau da escala em semitons a partir da tonica. Modo dorico: menor, mas sem a

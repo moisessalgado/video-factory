@@ -24,7 +24,7 @@ COR_ONDA = "0x7ec8e3"
 
 
 def presets() -> list[str]:
-    return ["ondas", "espectro", "estatico"]
+    return ["ondas", "espectro", "estatico", "gradiente"]
 
 
 def _fundo(preset: str, capa: Path | None) -> tuple[list[str], str]:
@@ -34,6 +34,11 @@ def _fundo(preset: str, capa: Path | None) -> tuple[list[str], str]:
     if preset == "estatico":
         return ["-f", "lavfi", "-i",
                 f"color=c={FUNDO_A}:s={LARGURA}x{ALTURA}:r={FPS}"], "cor"
+    # `gradiente`: o mesmo fundo dos outros presets, mas SEM visualizacao por
+    # cima. O operador achou a onda cansativa em nove minutos, e cor chapada por
+    # onze cai no "canal abandonado" que este arquivo existe para evitar. A
+    # deriva a 0,01 nao e perceptivel quadro a quadro e ainda assim a tela nao
+    # congela.
     # gradiente que se move devagar: a 0,01 nao ha movimento perceptivel quadro a
     # quadro, mas a tela nao fica congelada por nove minutos
     return ["-f", "lavfi", "-i",
@@ -43,7 +48,7 @@ def _fundo(preset: str, capa: Path | None) -> tuple[list[str], str]:
 
 def _sobreposicao(preset: str, temn_capa: bool) -> str:
     """Filtro que desenha a visualizacao do audio sobre o fundo."""
-    if preset == "estatico":
+    if preset in ("estatico", "gradiente"):
         return f"[0:v]scale={LARGURA}:{ALTURA}:force_original_aspect_ratio=increase," \
                f"crop={LARGURA}:{ALTURA},setsar=1[v]"
     if preset == "espectro":
@@ -63,13 +68,45 @@ def _sobreposicao(preset: str, temn_capa: bool) -> str:
             f"[bg][w]overlay=0:{int(ALTURA*0.36)}:format=auto[v]")
 
 
+# Estilo da legenda queimada.
+#
+# ATENCAO a escala: para um .srt o libass assume uma tela de referencia de 288 px
+# de altura, e nao os 1080 reais. Tudo aqui e multiplicado por 1080/288 = 3,75 na
+# hora de desenhar. `FontSize=13` vira ~49 px na tela, que e o corpo certo para
+# 1080p; um `FontSize=26` "razoavel" viraria 97 px e cobriria o meio da imagem.
+# Pelo mesmo motivo `MarginV=20` vira ~75 px do rodape.
+#
+# Contorno em vez de caixa opaca: caixa cobre o fundo o tempo todo, contorno so
+# ocupa o traco da letra.
+ESTILO_LEGENDA = (
+    "FontName=DejaVu Sans,FontSize=13,PrimaryColour=&H00FFFFFF,"
+    "OutlineColour=&HC0000000,BorderStyle=1,Outline=1,Shadow=0,"
+    "Alignment=2,MarginV=20"
+)
+
+
+def _escapar(p: Path) -> str:
+    """Caminho dentro do filtro do ffmpeg: dois niveis de escape."""
+    return str(p).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+
+
 def renderizar(audio: Path, destino: Path, preset: str = "ondas",
-               capa: Path | None = None, gpu: bool = True) -> Path:
+               capa: Path | None = None, gpu: bool = True,
+               legenda: Path | None = None) -> Path:
     """Gera o MP4 a partir do audio. `capa` sobrepoe o fundo gerado."""
     if preset not in presets():
         raise ValueError(f"preset desconhecido: {preset} (use {presets()})")
     entrada_fundo, _ = _fundo(preset, capa)
     filtro = _sobreposicao(preset, capa is not None)
+    if legenda is not None:
+        if not legenda.exists():
+            raise FileNotFoundError(f"legenda nao encontrada: {legenda}")
+        # queima DEPOIS da visualizacao, senao a onda passaria por cima do texto.
+        # Todo preset termina com exatamente um rotulo [v]; renomea-lo e o
+        # suficiente para encadear mais um filtro no fim.
+        filtro = filtro.replace("[v]", "[vbase]")
+        filtro += (f";[vbase]subtitles='{_escapar(legenda)}'"
+                   f":force_style='{ESTILO_LEGENDA}'[v]")
 
     video = (["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "31"] if gpu else
              ["-c:v", "libx264", "-preset", "medium", "-crf", "23"])

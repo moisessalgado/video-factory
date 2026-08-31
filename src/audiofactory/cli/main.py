@@ -261,6 +261,26 @@ def report(slug: str, medir: bool = typer.Option(True, "--medir/--sem-medir",
         raise typer.Exit(1)
 
 
+def _nome_de_arquivo(titulo: str) -> str:
+    """Titulo do projeto -> nome de arquivo publicavel, CURTO.
+
+    Mantem espacos e acentos: o YouTube usa o nome do arquivo como titulo
+    sugerido, e "Dhammacakkappavattana Sutta" le melhor que um slug com hifens.
+
+    Corta no primeiro travessao ou dois-pontos de proposito. O motivo nao e
+    estetico: o player do operador desenha o nome do arquivo sobre o video ao
+    iniciar, e um nome de 68 caracteres atravessa o rodape e COLIDE com a
+    legenda queimada. O nome completo do projeto vira o subtitulo la no YouTube;
+    aqui basta a parte que identifica.
+    """
+    limpo = "".join(" " if c in '/\\:*?"<>|' else c for c in titulo)
+    for corte in ("—", "–", " - ", ":"):
+        if corte in limpo:
+            limpo = limpo.split(corte)[0]
+            break
+    return " ".join(limpo.split()).strip(". ") or "video"
+
+
 @app.command()
 def video(slug: str,
           preset: str = typer.Option("ondas", help="ondas, espectro ou estatico"),
@@ -268,7 +288,15 @@ def video(slug: str,
               help="'ace' (modelo dedicado; 'ace:sobrio' escolhe a paleta), "
                    "'gerada' (sintetizada), 'nenhuma', ou caminho de um arquivo"),
           capa: Path = typer.Option(None, help="imagem de fundo (sobrepõe o preset)"),
-          trilha_lufs: float = typer.Option(None, help="nível da trilha (padrão −26)"),
+          trilha_lufs: float = typer.Option(None, help="nível da trilha (padrão −29,5)"),
+          legenda: bool = typer.Option(True, "--legenda/--sem-legenda",
+              help="queima o texto sincronizado (usa o .srt gerado pelo build)"),
+          musica_pecas: int = typer.Option(1,
+              help="peças distintas no leito; 1 repete a mesma o capítulo todo"),
+          musica_seg: float = typer.Option(120.0, help="duração de cada peça, em s"),
+          musica_peca: int = typer.Option(0, help="qual peça da paleta usar (0 a 5)"),
+          nome: str = typer.Option(None,
+              help="nome do MP4 (padrão: o título do projeto)"),
           gpu: bool = typer.Option(True, "--gpu/--cpu")):
     """Gera o MP4 para o YouTube, com trilha opcional sob a narração."""
     from ..audio import musica_ace as ace
@@ -277,6 +305,7 @@ def video(slug: str,
     from ..video.render import presets, renderizar
 
     p = _proj(slug)
+    cfg = proj_mod.carregar_config(p)
     if preset not in presets():
         console.print(f"[red]preset desconhecido:[/] {preset} — use {', '.join(presets())}")
         raise typer.Exit(1)
@@ -315,15 +344,27 @@ def video(slug: str,
                 if musica.startswith("ace"):
                     tr = ace.preparar_trilha(
                         alvo, duracao(master), paleta=paleta,
+                        n_pecas=musica_pecas, peca_s=musica_seg,
+                        peca_inicial=musica_peca,
                         progresso=lambda m: console.print(f"[dim]{m}[/]"))
                 else:
                     tr = preparar_trilha(alvo, duracao(master), fonte)
                 audio = p / "cache" / f"{master.stem}-com-trilha.wav"
                 mixar(master, tr, audio, trilha_lufs=trilha_lufs or TRILHA_LUFS)
 
-        destino = p / "output" / f"{master.stem.replace('-master','')}.mp4"
+        # O nome do arquivo NAO e detalhe: o YouTube pre-preenche o titulo do
+        # video com ele. "ch01.mp4" viraria o titulo sugerido da publicacao.
+        base = nome or _nome_de_arquivo(cfg["titulo"])
+        if len(masters) > 1:
+            base = f"{base} - {master.stem.replace('-master','')}"
+        destino = p / "output" / f"{base}.mp4"
+        srt = p / "audio" / "chapters" / f"{master.stem.replace('-master','')}.srt"
+        if legenda and not srt.exists():
+            console.print(f"[yellow]sem legenda:[/] {srt.name} não existe — "
+                          "rode `build` de novo para gerá-la")
         with console.status(f"renderizando {destino.name}…"):
-            renderizar(audio, destino, preset=preset, capa=capa, gpu=gpu)
+            renderizar(audio, destino, preset=preset, capa=capa, gpu=gpu,
+                       legenda=srt if (legenda and srt.exists()) else None)
         console.print(f"[green]{destino}[/] ({destino.stat().st_size/1e6:.0f} MB)")
 
     console.print("[dim]lembre do disclosure de conteúdo sintético ao publicar[/]")
@@ -555,11 +596,21 @@ def voice_new(voice_id: str, reference: Path = typer.Option(..., "--reference"),
 def voice_template(voice_id: str = typer.Argument(..., help="id a registrar, ex.: dora-v1"),
                    kokoro_voice: str = typer.Option("pf_dora",
                        help="voz do Kokoro: pf_dora, pm_alex, pm_santa"),
-                   segundos: int = typer.Option(16, help="duração da referência")):
+                   segundos: int = typer.Option(16, help="duração da referência"),
+                   velocidade: float = typer.Option(1.0,
+                       help="ritmo da referência (0,75 = mais pausado)")):
     """Cria uma voz template a partir de uma voz do Kokoro (Apache-2.0).
 
     Sintetiza uma referência com o Kokoro e a registra como voz de clonagem do
     Chatterbox: timbre brasileiro, sem trocar de motor quando a voz própria chegar.
+
+    `velocidade` existe porque o Chatterbox clona o ANDAMENTO junto com o timbre:
+    referência apressada rende narração apressada, e nenhum parâmetro de geração
+    corrige isso depois — medido, `cfg_weight` de 0,5 a 0,2 não move as palavras
+    por minuto. O lugar de decidir o ritmo é aqui.
+
+    Vem do Kokoro, e não de esticar o WAV com `atempo`, porque assim não há
+    artefato de time-stretch no sinal que condiciona o clone.
     """
     import warnings
 
@@ -574,12 +625,14 @@ def voice_template(voice_id: str = typer.Argument(..., help="id a registrar, ex.
     with console.status(f"sintetizando referência com {kokoro_voice}…"):
         pipe = KPipeline(lang_code="p")
         audio = np.concatenate([g.audio.numpy() for g in pipe(TEXTO_CALIBRACAO,
-                                                             voice=kokoro_voice)])
+                                                             voice=kokoro_voice,
+                                                             speed=velocidade)])
     tmp = proj_mod.RAIZ / "cache" / f"ref-{voice_id}.wav"
     tmp.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(tmp), audio, 24000)
     v = criar(proj_mod.RAIZ, voice_id, tmp,
-              template_de=f"Kokoro-82M (Apache-2.0), voz {kokoro_voice}")
+              template_de=f"Kokoro-82M (Apache-2.0), voz {kokoro_voice}"
+                          + (f", velocidade {velocidade:g}" if velocidade != 1.0 else ""))
     console.print(f"[green]voz template registrada[/] {v.dir}")
     console.print(f"procedência: {v.dir/'PROVENANCE.md'}")
     console.print(f"teste: [bold]iam voice voice test {voice_id}[/]")

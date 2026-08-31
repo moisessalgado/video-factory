@@ -171,3 +171,33 @@ def test_dip_e_muito_mais_raso_que_o_do_sintetizador():
     novo = db(x) - db(moldar(x, sr))
     antigo = db(x) - db(_moldar_para_voz(x, sr))
     assert antigo - novo > 6.0, f"antigo {antigo:.1f} dB, novo {novo:.1f} dB"
+
+
+def test_montar_nao_repete_a_cauda_quando_o_resto_cabe_no_cruzamento():
+    """Regressão: o laço avançava 1 amostra por volta quando o que faltava era
+    menor que o cruzamento, somando a cauda milhares de vezes. A acumulação
+    coerente virava senoide pura — 4 kHz a 74 dB acima da vizinhança, audível
+    como microfonia do 0:36 até o fim."""
+    sr = 24000
+    rng = np.random.default_rng(0)
+    pecas = [rng.standard_normal(int(120 * sr)) * 0.1 for _ in range(3)]
+    import soundfile as sf
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        ps = []
+        for i, a in enumerate(pecas):
+            q = Path(d) / f"p{i}.wav"
+            sf.write(str(q), a, sr)
+            ps.append(q)
+        # 44,4 s com cruzamento de 8 s: o resto cai exatamente no cruzamento
+        leito = montar(44.4, ps, sample_rate=sr, cruzamento_s=8.0)
+    assert len(leito) == int(44.4 * sr)
+    # nenhum tom estreito: ruído branco montado continua ruído branco
+    X = np.abs(np.fft.rfft(leito.astype(np.float64))) ** 2
+    f = np.fft.rfftfreq(len(leito), 1 / sr)
+    b = f > 2000
+    pico = X[b].max()
+    fp = f[b][X[b].argmax()]
+    viz = (f > fp * 0.8) & (f < fp * 1.25)
+    proeminencia = 10 * np.log10(pico / np.median(X[viz]))
+    assert proeminencia < 25, f"tom estreito em {fp:.0f} Hz, {proeminencia:.1f} dB acima"

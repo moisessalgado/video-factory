@@ -34,7 +34,7 @@ CACHE = RAIZ / "cache" / "musica"
 # de 2 min custam o mesmo que uma de 4 e rendem duas paisagens.
 PECA_S = 120.0
 # Quantas pecas distintas formam o leito. Seis dao 12 min de material inedito;
-# sob a narracao a -26 LUFS, ninguem percebe o retorno de uma peca depois disso.
+# sob a narracao a -20 LUFS, ninguem percebe o retorno de uma peca depois disso.
 N_PECAS = 6
 # Cruzamento longo de proposito: e ele que faz a troca de peca virar mudanca de
 # paisagem em vez de corte. Peca nova entrando em 8 s nao e um "evento".
@@ -50,16 +50,48 @@ _BASE = ("ambient, instrumental, meditative, slow tempo, sparse, gentle, warm, "
          "contemplative, soft reverb, spacious, quiet, "
          "no drums, no percussion, no beat, no vocals")
 
+# A paleta `drone` precisa da base OPOSTA. `sparse` pede notas separadas por
+# silencio, e um bordao e o contrario disso: som continuo que nunca resolve.
+# Manter o _BASE aqui produziria notas longas com buraco entre elas, que e outra
+# coisa -- e justamente a que soa como espera de telefone.
+_BASE_DRONE = ("ambient, instrumental, meditative, drone, sustained, continuous, "
+               "unchanging, mid register, rich overtones, warm, resonant, hypnotic, "
+               "no melody, no chord changes, no drums, no percussion, no beat, "
+               "no vocals")
+
 # Timbres acusticos por padrao. A queixa original era "extraterrestre", e pad de
 # sintetizador e exatamente o caminho de volta para la.
 PALETAS: dict[str, tuple[str, ...]] = {
+    # Familia estreitada pelo ouvido do operador, depois de ouvir as seis
+    # primeiras: piano e cordas friccionadas acompanham a leitura de sutta;
+    # violao, harpa, sinos, flauta e marimba nao. O padrao dos quatro rejeitados
+    # e claro -- corda pincada e percussao melodica tem ATAQUE, e ataque vira
+    # evento. Um leito para texto recitado precisa de som que comeca sem que se
+    # perceba onde.
+    #
+    # As duas aprovadas ficam nas posicoes 0 e 1 de proposito: a chave do cache
+    # carrega o indice, entao mexer nelas descartaria a musica ja aprovada.
     "contemplativo": (
         "felt piano, sustained strings",
         "warm string ensemble, cello, viola",
-        "nylon string guitar, harmonics, soft pad",
-        "harp, celesta, glass bells",
-        "wooden flute, shakuhachi, low drone",
-        "kalimba, marimba, soft mallets",
+        "grand piano, soft touch, long pedal",
+        "piano and cello, sparse duet",
+        "string quartet, muted, slow sustained chords",
+        "upright piano, felt dampers, distant",
+    ),
+    # Medida na referencia que o operador aprovou (recitacao em pali, 59 min):
+    # 77% da energia da trilha entre 150 e 300 Hz, centroide em 340 Hz, e nada
+    # acima de 1,5 kHz. Isso nao e um conjunto tocando baixo -- e um bordao, a
+    # base continua da tradicao (tanpura, caixa de shruti). Os timbres aqui miram
+    # aquela faixa: corda grave solta e palheta livre, que ressoam em 150-300 Hz
+    # sem que seja preciso forcar com equalizacao.
+    "drone": (
+        "tanpura drone, open strings, ringing overtones",
+        "shruti box, harmonium drone, sustained",
+        "bowed viola, one long sustained note",
+        "cello drone, long slow bow, singing register",
+        "sustained strings in unison, organ-like",
+        "tambura, continuous, shimmering overtones",
     ),
     "sobrio": (
         "solo cello, long bowed notes",
@@ -75,7 +107,8 @@ PALETAS: dict[str, tuple[str, ...]] = {
 def prompts(paleta: str = "contemplativo") -> tuple[str, ...]:
     if paleta not in PALETAS:
         raise ValueError(f"paleta desconhecida: {paleta} — use {', '.join(PALETAS)}")
-    return tuple(f"{timbre}, {_BASE}" for timbre in PALETAS[paleta])
+    base = _BASE_DRONE if paleta == "drone" else _BASE
+    return tuple(f"{timbre}, {base}" for timbre in PALETAS[paleta])
 
 
 def disponivel() -> bool:
@@ -95,7 +128,7 @@ def _seed(paleta: str, i: int) -> int:
 
 def gerar_pecas(paleta: str = "contemplativo", n: int = N_PECAS,
                 peca_s: float = PECA_S, sample_rate: int = SAMPLE_RATE,
-                progresso=None) -> list[Path]:
+                inicio: int = 0, progresso=None) -> list[Path]:
     """Gera (ou reaproveita do cache) as pecas do leito, ja em 24 kHz mono.
 
     O cache e o que torna a coisa viavel: gerar 12 min de musica custa minutos de
@@ -109,15 +142,22 @@ def gerar_pecas(paleta: str = "contemplativo", n: int = N_PECAS,
             f"git+https://github.com/ace-step/ACE-Step.git`")
     CACHE.mkdir(parents=True, exist_ok=True)
     ps = prompts(paleta)
-    finais = [CACHE / f"{paleta}-{i:02d}-{int(peca_s)}s-{sample_rate}.wav"
-              for i in range(n)]
+    # O prompt entra na chave do cache. Sem isso, reescrever um timbre nao
+    # invalidava nada e o leito continuava sendo o antigo -- um erro silencioso,
+    # do pior tipo: o codigo diz uma coisa e o arquivo em disco e outra.
+    idx = list(range(inicio, inicio + n))
+    marca = [hashlib.sha256(ps[i % len(ps)].encode()).hexdigest()[:8] for i in idx]
+    finais = [CACHE / f"{paleta}-{i:02d}-{marca[k]}-{int(peca_s)}s-{sample_rate}.wav"
+              for k, i in enumerate(idx)]
     # O modelo entrega 48 kHz estereo; o bruto fica ao lado do convertido para
     # que uma troca de sample_rate nao obrigue a gerar tudo de novo.
-    brutos = [CACHE / f"{paleta}-{i:02d}-{int(peca_s)}s-bruto.wav" for i in range(n)]
+    brutos = [CACHE / f"{paleta}-{i:02d}-{marca[k]}-{int(peca_s)}s-bruto.wav"
+              for k, i in enumerate(idx)]
 
     pendentes = [{"prompt": ps[i % len(ps)], "seed": _seed(paleta, i),
-                  "destino": str(brutos[i])}
-                 for i in range(n) if not finais[i].exists() and not brutos[i].exists()]
+                  "destino": str(brutos[k])}
+                 for k, i in enumerate(idx)
+                 if not finais[k].exists() and not brutos[k].exists()]
     if pendentes:
         if progresso:
             progresso(f"gerando {len(pendentes)} peça(s) no ACE-Step…")
@@ -172,7 +212,21 @@ def montar(duracao_s: float, pecas: list[Path], sample_rate: int = SAMPLE_RATE,
             trecho[:m] *= sobe[:m]
             saida[pos:pos + m] *= desce[:m]
         saida[pos:pos + n] += trecho
-        pos += max(n - n_cruz, 1)
+        # O avanco e o tamanho da peca MENOS o cruzamento, porque a proxima entra
+        # sobreposta. Quando ele nao e positivo, a peca atual ja cobre tudo o que
+        # faltava e o leito esta pronto -- e preciso PARAR.
+        #
+        # Aqui havia `pos += max(n - n_cruz, 1)`, posto para evitar laco infinito.
+        # Ele evitava o travamento e criava coisa pior: com o resto igual ao
+        # cruzamento, o avanco virava 1 amostra por volta e a cauda era
+        # multiplicada pela rampa e somada a uma peca nova 192 MIL vezes. A soma
+        # coerente disso e uma senoide pura -- medida em 4 kHz, 74 dB acima da
+        # vizinhanca, +26 dB acima do material de origem. Um leito de 44,4 s
+        # entrava com 192.001 iteracoes no lugar de 1.
+        avanco = n - n_cruz
+        if avanco <= 0:
+            break
+        pos += avanco
         i += 1
 
     # Entrada e saida suaves: a trilha nao pode comecar com um acorde ja tocando.
@@ -224,11 +278,21 @@ def moldar(x: np.ndarray, sr: int, dip_db: float = DIP_DB) -> np.ndarray:
 
 def preparar_trilha(destino: Path, duracao_s: float, paleta: str = "contemplativo",
                     sample_rate: int = SAMPLE_RATE, dip_db: float = DIP_DB,
+                    n_pecas: int = 1, peca_s: float = PECA_S, peca_inicial: int = 0,
                     progresso=None) -> Path:
-    """Deixa em `destino` um leito do tamanho exato da narracao."""
+    """Deixa em `destino` um leito do tamanho exato da narracao.
+
+    `n_pecas=1` por padrao: uma peca so, repetida. A intuicao inicial era o
+    contrario -- seis pecas distintas para combater a monotonia -- e ela estava
+    errada na pratica. Sob narracao, a TROCA de peca e um evento: o ouvinte, que
+    ja tinha desistido de prestar atencao na musica, volta a nota-la. Medido no
+    ch01: no cruzamento aos 3:44 a trilha sobe de -39 para -29 dB. Repeticao passa
+    despercebida; mudanca, nao.
+    """
     import soundfile as sf
 
-    pecas = gerar_pecas(paleta, sample_rate=sample_rate, progresso=progresso)
+    pecas = gerar_pecas(paleta, n=n_pecas, peca_s=peca_s, inicio=peca_inicial,
+                        sample_rate=sample_rate, progresso=progresso)
     leito = montar(duracao_s, pecas, sample_rate=sample_rate)
     leito = _por_pico(moldar(leito, sample_rate, dip_db), 0.5).astype(np.float32)
     destino.parent.mkdir(parents=True, exist_ok=True)

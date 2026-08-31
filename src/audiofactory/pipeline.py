@@ -14,12 +14,25 @@ from pathlib import Path
 
 import numpy as np
 
-from .audio.process import PAUSA_CAPITULO_MS, PAUSA_PARAGRAFO_MS, Segmento, montar, salvar_wav
+from .audio.process import (PAUSA_CAPITULO_MS, PAUSA_PARAGRAFO_MS, Segmento,
+                            montar_com_marcas, salvar_wav)
 from .engines.base import TTSEngine
 from .qa.policy import Decisao, Tentativa, deve_repetir, escolher
 from .qa.verify import Verifier
 from .script.models import Script
 from .store.db import Store
+
+
+def _lexicon_do_projeto() -> dict[str, str]:
+    """Mesmos arquivos de lexico que o `script` usou para respelar."""
+    import yaml
+
+    from .project import RAIZ
+
+    lex: dict[str, str] = {}
+    for f in sorted((RAIZ / "lexicon").glob("*.yaml")):
+        lex.update(yaml.safe_load(f.read_text(encoding="utf-8")) or {})
+    return lex
 
 
 class Runner:
@@ -224,9 +237,22 @@ class Runner:
             audio, _ = sf.read(r["wav_path"], dtype="float32")
             pausa = PAUSA_CAPITULO_MS if i == len(rows) - 1 else PAUSA_PARAGRAFO_MS
             segs.append(Segmento(audio, pausa))
-        full = montar(segs, self.engine.sample_rate)
+        full, marcas, pausas = montar_com_marcas(segs, self.engine.sample_rate)
         destino = self.projeto / "audio" / "chapters" / f"ch{chapter:02d}.wav"
         salvar_wav(full, destino, self.engine.sample_rate)
+        # A legenda sai junto com o audio, do MESMO ato de montagem: e a unica
+        # forma de os tempos serem os reais. Gerada depois, por outro caminho,
+        # ela descolaria da fala.
+        from .video.legenda import desfazer_lexico, escrever_srt
+        # O `text` e o respelling fonetico ("dama tchaca pavátana súta"), que
+        # existe para o motor pronunciar e nunca deve ser lido por gente. Mas o
+        # `source` tambem nao serve: ele guarda o PARAGRAFO inteiro, repetido em
+        # cada pedaco cortado dele -- no ch01, `text` soma 7.527 caracteres e
+        # `source`, 25.914. Usar `source` faz a legenda exibir texto que so sera
+        # falado nos pedacos seguintes, e e assim que ela "adianta".
+        lex = _lexicon_do_projeto()
+        escrever_srt(destino.with_suffix(".srt"), marcas,
+                     [desfazer_lexico(r["text"], lex) for r in rows], pausas)
         return destino
 
 

@@ -15,7 +15,12 @@ import numpy as np
 import soundfile as sf
 
 # Pausas estruturais, em milissegundos (silencio digital, nao gerado pelo TTS)
-PAUSA_PARAGRAFO_MS = 400
+# 400 ms era ritmo de audiolivro comum. Estes textos pedem outra coisa: o
+# operador pediu tempo para o ouvinte compreender o que foi dito, e 900 ms foi o
+# valor das amostras que ele aprovou. Vem junto com a voz `narrador-v2`, mais
+# lenta -- pausa e velocidade de fala sao alavancas separadas, e so as duas
+# juntas mudam a sensacao de pressa.
+PAUSA_PARAGRAFO_MS = 900
 PAUSA_SECAO_MS = 1000
 PAUSA_CAPITULO_MS = 1800
 
@@ -75,6 +80,73 @@ def montar(segmentos: list[Segmento], sample_rate: int,
             n = int(sample_rate * seg.pausa_depois_ms / 1000)
             out = np.concatenate([out, np.zeros(n, dtype=np.float32)])
     return out.astype(np.float32)
+
+
+# Uma pausa interna de fala: curta demais e e so a oclusiva de um /p/, longa
+# demais e ja e outro segmento. Entre 120 e 700 ms fica a virgula e o ponto.
+PAUSA_INTERNA_MIN_S = 0.12
+PAUSA_INTERNA_DB = -38.0
+
+
+def pausas_internas(audio: np.ndarray, sample_rate: int) -> list[float]:
+    """Centros dos silencios curtos dentro de um trecho, em segundos.
+
+    Servem para a legenda quebrar onde a VOZ quebra. Repartir uma legenda longa
+    por contagem de caracteres parece razoavel e nao e: fala nao tem taxa
+    constante de caracteres por segundo, e o erro aparece como legenda adiantada.
+    """
+    h = max(1, int(sample_rate * 0.02))
+    n = len(audio) // h
+    if n < 2:
+        return []
+    quadros = audio[:n * h].reshape(n, h)
+    db = 20 * np.log10(np.sqrt((quadros.astype(np.float64) ** 2).mean(axis=1)) + 1e-9)
+    baixo = db < PAUSA_INTERNA_DB
+    saida, ini = [], None
+    for i, b in enumerate(baixo):
+        if b and ini is None:
+            ini = i
+        elif not b and ini is not None:
+            if (i - ini) * h / sample_rate >= PAUSA_INTERNA_MIN_S:
+                saida.append((ini + i) / 2 * h / sample_rate)
+            ini = None
+    return saida
+
+
+def montar_com_marcas(segmentos: list[Segmento], sample_rate: int,
+                      crossfade_ms: int = CROSSFADE_MS
+                      ) -> tuple[np.ndarray, list[tuple[float, float]], list[list[float]]]:
+    """Como `montar`, mas devolve tambem onde cada segmento caiu, em segundos.
+
+    Os tempos precisam sair DAQUI, e nao de somar as duracoes dos chunks: o
+    `trim_silencio` encurta cada um por uma quantidade diferente, e o crossfade
+    engole `crossfade_ms` a cada emenda. Somar as duracoes do banco erra alguns
+    segundos ao longo de um capitulo -- o bastante para a legenda descolar da
+    fala.
+    """
+    if not segmentos:
+        return np.zeros(0, dtype=np.float32), [], []
+    n_cf = int(sample_rate * crossfade_ms / 1000)
+    primeiro = trim_silencio(segmentos[0].audio, sample_rate)
+    out = primeiro
+    marcas = [(0, len(out))]
+    pausas = [pausas_internas(primeiro, sample_rate)]
+    for i, seg in enumerate(segmentos):
+        if i > 0:
+            b = trim_silencio(seg.audio, sample_rate)
+            n = min(n_cf, len(out), len(b))
+            ini = len(out) - n
+            out = _crossfade(out, b, n_cf)
+            marcas.append((ini, ini + len(b)))
+            pausas.append([ini / sample_rate + t
+                           for t in pausas_internas(b, sample_rate)])
+        if seg.pausa_depois_ms and i < len(segmentos) - 1:
+            n = int(sample_rate * seg.pausa_depois_ms / 1000)
+            out = np.concatenate([out, np.zeros(n, dtype=np.float32)])
+    marcas_s = [(a / sample_rate, b / sample_rate) for a, b in marcas]
+    for k, (a, _) in enumerate(marcas):
+        pausas[k] = [a / sample_rate + t for t in pausas[k]] if k == 0 else pausas[k]
+    return out.astype(np.float32), marcas_s, pausas
 
 
 def _ffmpeg(args: list[str]) -> subprocess.CompletedProcess:
