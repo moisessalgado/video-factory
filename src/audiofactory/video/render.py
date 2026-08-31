@@ -13,6 +13,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from ..audio.process import duracao
+from . import slides as slides_mod
+
 # 1080p a 25 fps: o YouTube reencoda tudo, e mais resolucao so aumenta o upload.
 LARGURA, ALTURA, FPS = 1920, 1080, 25
 
@@ -24,16 +27,21 @@ COR_ONDA = "0x7ec8e3"
 
 
 def presets() -> list[str]:
-    return ["ondas", "espectro", "estatico", "gradiente"]
+    return ["slides", "ondas", "espectro", "estatico", "gradiente"]
 
 
-def _fundo(preset: str, capa: Path | None) -> tuple[list[str], str]:
-    """Entradas do ffmpeg e rotulo do fluxo de video de fundo."""
+def _fundo(preset: str, capa: Path | None,
+           plano: tuple[list[Path], float, float] | None,
+           veu: bool) -> list[str]:
+    """Entradas de video do ffmpeg. O audio entra depois delas."""
     if capa is not None:
-        return ["-loop", "1", "-framerate", str(FPS), "-i", str(capa)], "capa"
+        return ["-loop", "1", "-framerate", str(FPS), "-i", str(capa)]
+    if preset == "slides":
+        imagens, cada, _ = plano
+        return slides_mod.entradas(imagens, cada, FPS, LARGURA, veu)
     if preset == "estatico":
         return ["-f", "lavfi", "-i",
-                f"color=c={FUNDO_A}:s={LARGURA}x{ALTURA}:r={FPS}"], "cor"
+                f"color=c={FUNDO_A}:s={LARGURA}x{ALTURA}:r={FPS}"]
     # `gradiente`: o mesmo fundo dos outros presets, mas SEM visualizacao por
     # cima. O operador achou a onda cansativa em nove minutos, e cor chapada por
     # onze cai no "canal abandonado" que este arquivo existe para evitar. A
@@ -43,11 +51,20 @@ def _fundo(preset: str, capa: Path | None) -> tuple[list[str], str]:
     # quadro, mas a tela nao fica congelada por nove minutos
     return ["-f", "lavfi", "-i",
             f"gradients=s={LARGURA}x{ALTURA}:c0={FUNDO_A}:c1={FUNDO_B}"
-            f":speed=0.01:r={FPS}"], "grad"
+            f":speed=0.01:r={FPS}"]
 
 
-def _sobreposicao(preset: str, temn_capa: bool) -> str:
-    """Filtro que desenha a visualizacao do audio sobre o fundo."""
+def _sobreposicao(preset: str, capa: Path | None, i_audio: int,
+                  plano: tuple[list[Path], float, float] | None,
+                  veu: bool) -> str:
+    """Filtro que desenha a visualizacao do audio sobre o fundo.
+
+    `i_audio` nao e fixo: o preset `slides` abre uma entrada por imagem, e o
+    audio passa a ser a ultima delas.
+    """
+    if preset == "slides" and capa is None:
+        imagens, cada, cruzamento = plano
+        return slides_mod.filtro(imagens, cada, cruzamento, LARGURA, ALTURA, veu)
     if preset in ("estatico", "gradiente"):
         return f"[0:v]scale={LARGURA}:{ALTURA}:force_original_aspect_ratio=increase," \
                f"crop={LARGURA}:{ALTURA},setsar=1[v]"
@@ -56,13 +73,13 @@ def _sobreposicao(preset: str, temn_capa: bool) -> str:
         # (A B C D E F G) sobre a imagem, o que num audiolivro nao faz sentido
         # nenhum. `sono_h=0` tira o sonograma e deixa so as barras, que sao mais
         # calmas. O blend e `lighten` e nao `screen`: screen lava o fundo inteiro.
-        return (f"[1:a]showcqt=s={LARGURA}x{ALTURA}:r={FPS}:count=2:axis=0:"
+        return (f"[{i_audio}:a]showcqt=s={LARGURA}x{ALTURA}:r={FPS}:count=2:axis=0:"
                 f"sono_h=0:bar_g=2:basefreq=55:endfreq=6000:"
                 f"cscheme=0.4|0.8|1.0|0.1|0.4|0.9[cqt];"
                 f"[0:v]scale={LARGURA}:{ALTURA},setsar=1[bg];"
                 "[bg][cqt]blend=all_mode=lighten[v]")
     # ondas: linha central sobre o fundo, na altura dos olhos
-    return (f"[1:a]showwaves=s={LARGURA}x{int(ALTURA*0.28)}:mode=cline:"
+    return (f"[{i_audio}:a]showwaves=s={LARGURA}x{int(ALTURA*0.28)}:mode=cline:"
             f"colors={COR_ONDA}:r={FPS}:scale=sqrt[w];"
             f"[0:v]scale={LARGURA}:{ALTURA},setsar=1[bg];"
             f"[bg][w]overlay=0:{int(ALTURA*0.36)}:format=auto[v]")
@@ -90,14 +107,33 @@ def _escapar(p: Path) -> str:
     return str(p).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
 
-def renderizar(audio: Path, destino: Path, preset: str = "ondas",
+def renderizar(audio: Path, destino: Path, preset: str = "slides",
                capa: Path | None = None, gpu: bool = True,
-               legenda: Path | None = None) -> Path:
-    """Gera o MP4 a partir do audio. `capa` sobrepoe o fundo gerado."""
+               legenda: Path | None = None,
+               slides_dir: Path | None = None,
+               slides_seg: float = slides_mod.SEGUNDOS_POR_IMAGEM,
+               slides_seed: int | None = None) -> Path:
+    """Gera o MP4 a partir do audio. `capa` sobrepoe o fundo gerado.
+
+    No preset `slides` o numero de imagens sai da duracao do audio, e quais
+    imagens sao sorteadas do acervo -- diferentes a cada render, a menos que
+    `slides_seed` fixe o sorteio.
+    """
     if preset not in presets():
         raise ValueError(f"preset desconhecido: {preset} (use {presets()})")
-    entrada_fundo, _ = _fundo(preset, capa)
-    filtro = _sobreposicao(preset, capa is not None)
+    plano = None
+    if preset == "slides" and capa is None:
+        plano = slides_mod.plano(
+            duracao(audio), slides_dir or slides_mod.DIRETORIO_PADRAO,
+            segundos_por_imagem=slides_seg, seed=slides_seed)
+    # O veu so existe para dar contraste a legenda; sem legenda ele seria um
+    # escurecimento sem motivo no rodape da arte.
+    veu = legenda is not None
+    entrada_fundo = _fundo(preset, capa, plano, veu)
+    # Contado, e nao deduzido: `slides` abre uma entrada por imagem mais o veu,
+    # e o audio e sempre a proxima. Errar este indice mapeia o audio errado.
+    n_video = entrada_fundo.count("-i")
+    filtro = _sobreposicao(preset, capa, n_video, plano, veu)
     if legenda is not None:
         if not legenda.exists():
             raise FileNotFoundError(f"legenda nao encontrada: {legenda}")
@@ -114,7 +150,7 @@ def renderizar(audio: Path, destino: Path, preset: str = "ondas",
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
          *entrada_fundo, "-i", str(audio),
-         "-filter_complex", filtro, "-map", "[v]", "-map", "1:a",
+         "-filter_complex", filtro, "-map", "[v]", "-map", f"{n_video}:a",
          *video, "-pix_fmt", "yuv420p",
          # faststart poe o indice no inicio: o YouTube processa antes de terminar
          # o upload, e um player web consegue comecar sem baixar tudo

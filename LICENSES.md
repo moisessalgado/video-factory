@@ -63,6 +63,16 @@ Todo áudio do Chatterbox carrega o watermark neural **Perth** (Resemble AI), re
 A voz do narrador é a voz do próprio operador do canal, com `voices/<id>/CONSENT.md`.
 Proibido usar áudio de terceiros como referência de clonagem sem consentimento escrito.
 
+## Imagens do vídeo
+
+| Item | Origem | Uso comercial | Nota |
+|---|---|---|---|
+| `assets/slides/*.jpg` (52) | Gerações próprias do operador no **Midjourney** (conta `moisescomsal`, 2023) | 🟡 **Conferir o plano** | Os Termos do Midjourney atribuem os direitos sobre a saída ao assinante **pago**; em plano gratuito a licença é CC-BY-NC. Confirmar que estas gerações saíram de assinatura paga antes de monetizar. |
+
+Não há terceiro envolvido: nenhum upload de imagem alheia, nenhum banco de imagens. O risco aqui
+não é de terceiro reclamar a imagem, é de o plano da conta na época não conferir o direito
+comercial — por isso a linha fica em amarelo até o operador confirmar.
+
 ## Texto
 
 Cada projeto declara `rights:` em `project.yaml`. `export` é bloqueado sem esse campo.

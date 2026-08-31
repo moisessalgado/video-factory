@@ -11,3 +11,11 @@ __pycache__/
 
 # NUNCA versionar vozes de referencia (TDD secao 15)
 voices/
+
+# Acervo de slides: 52 imagens, 25 MB. Fora do git de proposito -- entraria no
+# historico para sempre e nao ha por que carregar isso num clone. Origem e
+# licenca em LICENSES.md; sem a pasta, use --preset gradiente ou --slides-dir.
+assets/
+
+# Takes soltos na raiz, de teste manual
+/*.wav

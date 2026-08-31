@@ -283,11 +283,18 @@ def _nome_de_arquivo(titulo: str) -> str:
 
 @app.command()
 def video(slug: str,
-          preset: str = typer.Option("ondas", help="ondas, espectro ou estatico"),
+          preset: str = typer.Option("slides",
+              help="slides, ondas, espectro, estatico ou gradiente"),
           musica: str = typer.Option("nenhuma",
               help="'ace' (modelo dedicado; 'ace:sobrio' escolhe a paleta), "
                    "'gerada' (sintetizada), 'nenhuma', ou caminho de um arquivo"),
-          capa: Path = typer.Option(None, help="imagem de fundo (sobrepõe o preset)"),
+          capa: Path = typer.Option(None, help="imagem fixa de fundo (sobrepõe o preset)"),
+          slides_dir: Path = typer.Option(None,
+              help="pasta das imagens do preset slides (padrão: assets/slides)"),
+          slides_seg: float = typer.Option(45.0,
+              help="segundos que cada imagem fica na tela"),
+          slides_seed: int = typer.Option(None,
+              help="fixa o sorteio das imagens; sem isso cada render sorteia de novo"),
           trilha_lufs: float = typer.Option(None, help="nível da trilha (padrão −29,5)"),
           legenda: bool = typer.Option(True, "--legenda/--sem-legenda",
               help="queima o texto sincronizado (usa o .srt gerado pelo build)"),
@@ -302,6 +309,7 @@ def video(slug: str,
     from ..audio import musica_ace as ace
     from ..audio.musica import TRILHA_LUFS, mixar, preparar_trilha
     from ..audio.process import duracao
+    from ..video import slides as slides_mod
     from ..video.render import presets, renderizar
 
     p = _proj(slug)
@@ -309,6 +317,18 @@ def video(slug: str,
     if preset not in presets():
         console.print(f"[red]preset desconhecido:[/] {preset} — use {', '.join(presets())}")
         raise typer.Exit(1)
+
+    # Acervo conferido ANTES do laço, pelo mesmo motivo da trilha: pasta vazia
+    # tem de aparecer agora, e não depois de meia hora de render.
+    if preset == "slides" and capa is None:
+        pasta = slides_dir or slides_mod.DIRETORIO_PADRAO
+        acervo = slides_mod.disponiveis(pasta)
+        if not acervo:
+            console.print(f"[red]nenhuma imagem em[/] {pasta} — aponte "
+                          "--slides-dir para uma pasta com .jpg/.png, ou use "
+                          "outro preset")
+            raise typer.Exit(1)
+        console.print(f"[dim]acervo de slides: {len(acervo)} imagens em {pasta}[/]")
 
     # Resolve o modo da trilha uma vez, antes do laço: um erro de paleta ou um
     # arquivo inexistente tem de aparecer agora, e não depois de renderizar
@@ -364,7 +384,9 @@ def video(slug: str,
                           "rode `build` de novo para gerá-la")
         with console.status(f"renderizando {destino.name}…"):
             renderizar(audio, destino, preset=preset, capa=capa, gpu=gpu,
-                       legenda=srt if (legenda and srt.exists()) else None)
+                       legenda=srt if (legenda and srt.exists()) else None,
+                       slides_dir=slides_dir, slides_seg=slides_seg,
+                       slides_seed=slides_seed)
         console.print(f"[green]{destino}[/] ({destino.stat().st_size/1e6:.0f} MB)")
 
     console.print("[dim]lembre do disclosure de conteúdo sintético ao publicar[/]")

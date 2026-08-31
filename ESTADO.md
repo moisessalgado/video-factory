@@ -437,6 +437,33 @@ audio-factory video dhammacakka --musica ace:sobrio     # cordas graves, mais s�
 audio-factory video dhammacakka --musica gerada         # sintetizador antigo, sem GPU
 ```
 
+## Fundo do vídeo: slides (padrão desde 2026-08-31)
+
+O preset padrão do `video` passou de `ondas` para **`slides`**: as imagens do canal em
+`assets/slides/` trocando por dissolve de 2 s, uma a cada 45 s. Substitui o `gradiente`, que
+existia só para a tela não congelar e não dizia nada. Os presets antigos continuam todos lá.
+
+```bash
+audio-factory video dhammacakka                          # slides, sorteio novo a cada render
+audio-factory video dhammacakka --slides-seed 7          # repete o sorteio de um render
+audio-factory video dhammacakka --slides-seg 30          # troca mais rápida
+audio-factory video dhammacakka --preset gradiente       # o fundo antigo
+```
+
+- **52 imagens** no acervo (`assets/slides/`, 25 MB), JPEG q2 com no máximo 1920 px — as originais
+  em PNG somavam 110 MB. Duplicatas exatas removidas.
+- ⚠️ **`assets/` não é versionado** (está no `.gitignore`): 25 MB entrariam no histórico para
+  sempre. Num clone limpo a pasta não existe e o preset padrão falha com uma mensagem explícita —
+  use `--slides-dir` apontando para o acervo, ou `--preset gradiente`. O acervo vive na máquina
+  que publica; origem e licença em `LICENSES.md`.
+- O acervo é conferido **antes** do laço de capítulos, como a paleta da trilha.
+- Custo: **~6× tempo real** com `h264_nvenc` (100 s de áudio em 16 s), contra ~4× do `gradiente`.
+- As imagens são quadradas ou panorâmicas, quase nenhuma em 16:9. Entram inteiras, e o resto do
+  quadro recebe a própria imagem ampliada e desfocada — o desfoque é feito em 192×108 e esticado,
+  porque `gblur` em 1080p custaria caro em todo quadro de um still parado 45 s.
+- **Véu no rodapé** (300 px, até 70% de preto) só quando há legenda queimada: o `gradiente` era
+  escuro por baixo do texto de graça, arte clara não é.
+
 ## Calibrações medidas (não re-derivar)
 
 - Whisper **`small` na CPU**: QA custa ~8% do tempo de áudio. `medium` na CPU é inviável (estourou

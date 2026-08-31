@@ -55,7 +55,7 @@ com resume após falha e relatório de QA. Sem música, sem vídeo, sem web UI.
 | F9 | Retomar processamento exatamente de onde parou após falha/interrupção |
 | F10 | Reportar status e progresso por projeto |
 | F11 | Permitir revisão manual e regeneração cirúrgica de um único chunk |
-| F12 | Gerar o MP4 exigido pelo YouTube, com imagem derivada do próprio sinal de áudio |
+| F12 | Gerar o MP4 exigido pelo YouTube, com fundo em slides do acervo do canal ou derivado do próprio sinal de áudio |
 | F13 | Mixar trilha instrumental sob a narração, com ducking pela própria voz |
 
 ### Não-funcionais
@@ -737,9 +737,18 @@ encadeadas por cruzamento de potência constante, e a moldagem espectral passou 
 15 dB para um dip de 5 dB — o ducking, que já funcionava, faz o resto. Trilha sintetizada e trilha
 externa continuam aceitas por caminho explícito. Ver §9.1.
 
-**Vídeo — ENTREGUE.** Três presets, todos derivados do próprio áudio via filtros do FFmpeg, sem
-dependência nova e sem arquivo de vídeo para licenciar. Renderiza a ~20× tempo real com `h264_nvenc`
-(9 min de áudio em 2,5 min). Aberturas/encerramentos declarados no preset continuam fora.
+**Vídeo — ENTREGUE.** Presets derivados do próprio áudio via filtros do FFmpeg, sem dependência nova
+e sem arquivo de vídeo para licenciar. Renderiza a ~20× tempo real com `h264_nvenc` (9 min de áudio
+em 2,5 min). Aberturas/encerramentos declarados no preset continuam fora.
+
+**Slides — ENTREGUE (2026-08-31), e agora o padrão.** O fundo deixou de ser só sinal: `slides`
+sorteia imagens do acervo próprio do canal (`assets/slides/`, geradas pelo operador no Midjourney)
+e as encadeia por dissolve, uma a cada 45 s. A quantidade sai da duração do áudio e o sorteio muda
+a cada render — `--slides-seed` fixa, para repetir um vídeo. Substitui o `gradiente`, que resolvia
+o "canal abandonado" sem dizer nada; os presets antigos continuam disponíveis. Não usa `zoompan`
+(Ken Burns): em still de 1080p custa caro por quadro e o passo fracionário treme em movimento
+lento. Licença em `LICENSES.md` — é material próprio, mas o plano da conta na época precisa ser
+confirmado antes de monetizar. Custo do render passou de ~4× para ~6× tempo real.
 
 ---
 
