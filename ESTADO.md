@@ -409,6 +409,34 @@ que está incompleto**, não o pipeline. Para o discurso inteiro basta substitui
 fonte e rodar de novo; o `rights:` do projeto registra que a tradução é do site da
 KF e o status é `TESTE-LOCAL-NAO-PUBLICAR`.
 
+## Trilha de fundo: ACE-Step em venv separada
+
+A trilha sintetizada (`audio/musica.py`) soava **abstrata e sinistra** — pad de ficção científica.
+Ver `docs/TDD.md` §9.1 para o diagnóstico completo. A trilha padrão agora vem do **ACE-Step v1
+3.5B** (Apache-2.0), gerado localmente.
+
+⚠️ **Venv separada, não negociável:** o `acestep` fixa `transformers==4.50.0` e `datasets==3.4.1`.
+Instalar na `.venv` do TTS quebra um dos dois. A fronteira é um subprocesso que troca JSON e WAV
+(`audio/_ace_runner.py`) — nenhum objeto Python atravessa.
+
+```bash
+uv venv --python 3.12 .venv-musica
+uv pip install --python .venv-musica/bin/python git+https://github.com/ace-step/ACE-Step.git
+```
+
+Boa notícia: **a armadilha do cu124 não se repete aqui.** O `torch` do PyPI já resolve para
+`2.13.0+cu130`, que roda em sm_120 — não é preciso o passo de reinstalação por índice.
+
+Os pesos (8,3 GB) baixam sozinhos na primeira geração, para `models/ace-step/`. As peças ficam em
+`cache/musica/` e **não dependem do capítulo nem do projeto**, só da paleta: gerar uma vez serve
+para todos os livros.
+
+```bash
+audio-factory video dhammacakka --musica ace            # paleta contemplativo
+audio-factory video dhammacakka --musica ace:sobrio     # cordas graves, mais sóbrio
+audio-factory video dhammacakka --musica gerada         # sintetizador antigo, sem GPU
+```
+
 ## Calibrações medidas (não re-derivar)
 
 - Whisper **`small` na CPU**: QA custa ~8% do tempo de áudio. `medium` na CPU é inviável (estourou

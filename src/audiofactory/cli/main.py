@@ -265,11 +265,13 @@ def report(slug: str, medir: bool = typer.Option(True, "--medir/--sem-medir",
 def video(slug: str,
           preset: str = typer.Option("ondas", help="ondas, espectro ou estatico"),
           musica: str = typer.Option("nenhuma",
-              help="'gerada' (trilha própria), 'nenhuma', ou caminho de um arquivo"),
+              help="'ace' (modelo dedicado; 'ace:sobrio' escolhe a paleta), "
+                   "'gerada' (sintetizada), 'nenhuma', ou caminho de um arquivo"),
           capa: Path = typer.Option(None, help="imagem de fundo (sobrepõe o preset)"),
           trilha_lufs: float = typer.Option(None, help="nível da trilha (padrão −26)"),
           gpu: bool = typer.Option(True, "--gpu/--cpu")):
     """Gera o MP4 para o YouTube, com trilha opcional sob a narração."""
+    from ..audio import musica_ace as ace
     from ..audio.musica import TRILHA_LUFS, mixar, preparar_trilha
     from ..audio.process import duracao
     from ..video.render import presets, renderizar
@@ -278,6 +280,28 @@ def video(slug: str,
     if preset not in presets():
         console.print(f"[red]preset desconhecido:[/] {preset} — use {', '.join(presets())}")
         raise typer.Exit(1)
+
+    # Resolve o modo da trilha uma vez, antes do laço: um erro de paleta ou um
+    # arquivo inexistente tem de aparecer agora, e não depois de renderizar
+    # metade dos capítulos.
+    fonte, paleta = None, "contemplativo"
+    if musica.startswith("ace"):
+        paleta = musica.split(":", 1)[1] if ":" in musica else "contemplativo"
+        if paleta not in ace.PALETAS:
+            console.print(f"[red]paleta desconhecida:[/] {paleta} — "
+                          f"use {', '.join(ace.PALETAS)}")
+            raise typer.Exit(1)
+        if not ace.disponivel():
+            console.print(f"[red]venv de música ausente:[/] {ace.VENV} — "
+                          "veja ESTADO.md, ou use `--musica gerada`")
+            raise typer.Exit(1)
+    elif musica not in ("nenhuma", "gerada"):
+        fonte = Path(musica).resolve()
+        if not fonte.exists():
+            console.print(f"[red]trilha não encontrada:[/] {fonte}")
+            raise typer.Exit(1)
+        console.print("[yellow]trilha de terceiro:[/] confira a licença antes de "
+                      "publicar — o Content ID do YouTube reclama sozinho")
     masters = sorted((p / "output").glob("*-master.wav"))
     if not masters:
         console.print("[red]nenhum master[/] — rode `export` antes")
@@ -286,16 +310,14 @@ def video(slug: str,
     for master in masters:
         audio = master
         if musica != "nenhuma":
-            fonte = None if musica == "gerada" else Path(musica).resolve()
-            if fonte is not None and not fonte.exists():
-                console.print(f"[red]trilha não encontrada:[/] {fonte}")
-                raise typer.Exit(1)
-            if fonte is not None:
-                console.print("[yellow]trilha de terceiro:[/] confira a licença antes de "
-                              "publicar — o Content ID do YouTube reclama sozinho")
+            alvo = p / "cache" / f"{master.stem}-trilha.wav"
             with console.status("preparando a trilha…"):
-                tr = preparar_trilha(p / "cache" / f"{master.stem}-trilha.wav",
-                                     duracao(master), fonte)
+                if musica.startswith("ace"):
+                    tr = ace.preparar_trilha(
+                        alvo, duracao(master), paleta=paleta,
+                        progresso=lambda m: console.print(f"[dim]{m}[/]"))
+                else:
+                    tr = preparar_trilha(alvo, duracao(master), fonte)
                 audio = p / "cache" / f"{master.stem}-com-trilha.wav"
                 mixar(master, tr, audio, trilha_lufs=trilha_lufs or TRILHA_LUFS)
 
@@ -305,6 +327,38 @@ def video(slug: str,
         console.print(f"[green]{destino}[/] ({destino.stat().st_size/1e6:.0f} MB)")
 
     console.print("[dim]lembre do disclosure de conteúdo sintético ao publicar[/]")
+
+
+@app.command()
+def musica(paleta: str = typer.Option("contemplativo", help="contemplativo ou sobrio"),
+           duracao: float = typer.Option(0.0,
+               help="se >0, monta também um leito desta duração, para ouvir a emenda")):
+    """Gera as peças da trilha e mostra onde ficaram, para ouvir antes de renderizar.
+
+    Existe porque a alternativa é descobrir que a paleta não serve depois de
+    renderizar uma hora de vídeo.
+    """
+    from ..audio import musica_ace as ace
+
+    if paleta not in ace.PALETAS:
+        console.print(f"[red]paleta desconhecida:[/] {paleta} — use {', '.join(ace.PALETAS)}")
+        raise typer.Exit(1)
+    if not ace.disponivel():
+        console.print(f"[red]venv de música ausente:[/] {ace.VENV} — veja ESTADO.md")
+        raise typer.Exit(1)
+
+    with console.status(f"peças da paleta {paleta}…"):
+        pecas = ace.gerar_pecas(paleta, progresso=lambda m: console.print(f"[dim]{m}[/]"))
+    t = Table("peça", "timbre", "arquivo")
+    for peca, prompt in zip(pecas, ace.PALETAS[paleta]):
+        t.add_row(peca.stem.split("-")[1], prompt, str(peca))
+    console.print(t)
+
+    if duracao > 0:
+        alvo = ace.CACHE / f"leito-{paleta}-{int(duracao)}s.wav"
+        with console.status("montando o leito…"):
+            ace.preparar_trilha(alvo, duracao, paleta=paleta)
+        console.print(f"[green]{alvo}[/]")
 
 
 voice_app = typer.Typer(help="Registry de vozes do canal", no_args_is_help=True)

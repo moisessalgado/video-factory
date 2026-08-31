@@ -384,11 +384,29 @@ Toda a cadeia é **FFmpeg** (já no sistema) — sem SoX, sem pydub, sem plugins
 A trilha entra **depois** do master da narração, nunca antes: o `loudnorm` da narração
 precisa medir só a voz.
 
+**Revisão V3 (2026-08-30) — por que o sintetizador saiu do padrão.** A V2 sintetizava a trilha
+(`audio/musica.py`) e cumpria o contrato espectral, mas o operador ouviu o resultado e o descreveu
+como *abstrato, sinistro, extraterrestre*. A causa é de desenho, não de ajuste, e são duas:
+
+1. **O drone.** Parciais desafinados, LFO lento em cada um, sem ataque — é literalmente a receita
+   de *pad* de ficção científica. Nenhum instrumento real soa assim.
+2. **O buraco espectral.** A depressão de 15 dB entre 120 e 1400 Hz arranca o médio inteiro. Em som
+   harmônico real isso tira o corpo do instrumento e deixa grave + brilho sem nada no meio — o
+   timbre "oco" de rádio quebrado. **Medido: numa série harmônica de 220 Hz, a energia de 300 a
+   700 Hz cai de 23% para 7%.**
+
+O ponto 2 é o que impede trocar só o motor: música bonita passada pela mesma moldagem sai sinistra
+do mesmo jeito. Por isso a V3 muda as duas coisas.
+
 | Etapa | Decisão | Justificativa |
 |---|---|---|
-| Origem | **Sintetizada pelo projeto** (`audio/musica.py`) | É a única trilha com licença inquestionável. O Content ID do YouTube reclama sozinho, e uma senoide não tem gravadora. Trilha de terceiro é aceita por caminho explícito, com aviso no `video` |
-| Forma | Drone modal, sem ritmo e sem melodia, ciclo de 4 acordes a cada 24 s | Melodia por baixo compete pela atenção; leito harmônico estático preenche o silêncio sem disputar |
-| Espectro | Duas camadas — grave abaixo da fundamental da voz e brilho 4 oitavas acima — com depressão de 15 dB na faixa da fala | **Medido nesta narração: 49,5% da energia entre 300 e 700 Hz, fundamental em 150 Hz.** A trilha é desenhada como complemento espectral, não como "música bonita sozinha" |
+| Origem | **ACE-Step v1 3.5B** (`audio/musica_ace.py`), local | Pesos **Apache-2.0** — a licença era a razão original de sintetizar tudo, e continua satisfeita. MusicGen ficou fora: pesos CC-BY-NC, e este canal publica. Sintetizada (`--musica gerada`) e trilha de terceiro seguem aceitas |
+| Isolamento | Venv `.venv-musica`, chamada por subprocesso com JSON | O `acestep` fixa `transformers==4.50` e `datasets==3.4`; numa venv só, um dos dois pipelines quebra. Só um JSON e um WAV atravessam a fronteira |
+| Forma | 6 peças instrumentais de 2 min, encadeadas com cruzamento de 8 s até cobrir o capítulo | 12 min de material inédito. Peça longa não compra nada: o que combate a monotonia é variedade entre peças, e o cruzamento faz a troca virar mudança de paisagem, não corte |
+| Emenda | Cruzamento de **potência constante** (seno/cosseno) | Entre sinais descorrelacionados o cruzamento linear perde 3 dB no meio — **medido: −2,6 dB**, o "respiro" que denuncia o loop. Com potência constante: **+0,3 dB** |
+| Prompt | Timbres acústicos, com `no vocals, no drums, no percussion` obrigatórios | Voz cantada disputa com a narração; ataque percussivo atravessa o ducking, porque o sidechain é lento demais para pegar transiente. Timbre de sintetizador é o caminho de volta ao "extraterrestre" |
+| Espectro | **Dip gaussiano de 5 dB** centrado em 500 Hz, σ = 1,6 oitava | Substitui a depressão de 15 dB. Gaussiana em log-frequência porque borda de filtro o ouvido lê como coloração ("efeito telefone"); 5 dB some como timbre e sobra como espaço. Quem tira a trilha da frente da fala *no momento da fala* é o ducking, que já funciona |
+| Determinismo | Seed = SHA-256 da paleta + índice; peças em cache | Capítulo regerado não pode trocar de música no meio de série publicada. E o leito não depende do capítulo: projeto novo reusa sem gastar GPU |
 | Nível | −26 LUFS antes do ducking | Audível na pausa sem mascarar consoante |
 | Ducking | `sidechaincompress` com a **narração como chave** | Nível fixo não serve: o que cabe na pausa é alto demais sob a fala. Medido: 5,9 dB de recuo, com a voz 28 dB acima da trilha durante a fala |
 | Narração | Entra em ganho unitário, **sem compressão** | Já saiu do `loudnorm` no alvo; comprimir de novo achataria a leitura |
@@ -711,10 +729,13 @@ estão entregues.
 aprovar chunks em `needs_review`. Uma página local com lista, waveform, texto e botão "regenerar"
 economiza tempo de verdade. Web UI para *lançar* processamento não economiza nada.
 
-**Música — ENTREGUE.** A previsão era usar trilha de terceiro com atenção à licença; a decisão foi
-outra e melhor: **o projeto gera a própria trilha**. O risco de Content ID some, e o desenho pôde
-ser feito sob medida para esta narração — a trilha é o complemento espectral da voz, medido, e não
-uma música escolhida por gosto. Trilha externa continua aceita, com aviso de licença.
+**Música — ENTREGUE (V3).** A previsão era trilha de terceiro com atenção à licença. A V2 sintetizou
+a própria trilha, o que matou o risco de Content ID mas soou abstrato e sinistro — pad de ficção
+científica, e não música. A V3 mantém a garantia de licença **e** resolve o som: gera com o
+**ACE-Step v1 3.5B**, de pesos Apache-2.0, rodando local em venv isolada. Seis peças acústicas
+encadeadas por cruzamento de potência constante, e a moldagem espectral passou de um buraco de
+15 dB para um dip de 5 dB — o ducking, que já funcionava, faz o resto. Trilha sintetizada e trilha
+externa continuam aceitas por caminho explícito. Ver §9.1.
 
 **Vídeo — ENTREGUE.** Três presets, todos derivados do próprio áudio via filtros do FFmpeg, sem
 dependência nova e sem arquivo de vídeo para licenciar. Renderiza a ~20× tempo real com `h264_nvenc`

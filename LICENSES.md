@@ -3,7 +3,7 @@
 Auditoria exigida pela §14 do TDD. **Nenhum peso entra no pipeline sem uma linha aqui.**
 Reconferir o model card a cada atualização de versão — licença de peso pode mudar entre releases.
 
-Última verificação: 2026-08-29.
+Última verificação: 2026-08-30.
 
 ## Pesos de TTS
 
@@ -15,6 +15,22 @@ Reconferir o model card a cada atualização de versão — licença de peso pod
 | `hexgrad/Kokoro-82M` | Apache-2.0 | ✅ Sim | model card HF |
 | `rhasspy/piper-voices` pt_BR | MIT (verificar por voz) | 🟡 Conferir voz a voz | repo HF |
 
+## Pesos de música
+
+| Modelo | Licença | Uso comercial | Fonte verificada |
+|---|---|---|---|
+| `ACE-Step/ACE-Step-v1-3.5B` | Apache-2.0 | ✅ Sim | model card HF (`license: apache-2.0`) + `LICENSE` do repo, 2026-08-30 |
+
+Roda na venv isolada `.venv-musica`, nunca no processo do pipeline — ver `audio/_ace_runner.py`.
+
+⚠️ **Ressalva honesta, registrada de propósito.** A senoide da V2 tinha risco de Content ID *zero* —
+não havia gravação a que se parecer. Um modelo generativo é outra coisa: o próprio disclaimer do
+ACE-Step alerta para "unintentional copyright infringement due to stylistic similarity". O risco
+real continua baixo, porque o Content ID casa **gravações**, não estilos, e o leito aqui é
+instrumental esparso e sem melodia reconhecível. Mas deixou de ser nulo, e essa é a moeda com que
+se pagou o som melhor. Se um vídeo levar reclamação de Content ID, trocar a paleta (ou voltar para
+`--musica gerada`) é a saída, e o `cache/musica/` guarda o material exato que gerou cada trilha.
+
 ## Excluídos do pipeline — pesos não-comerciais
 
 | Modelo | Licença dos pesos | Motivo |
@@ -23,6 +39,7 @@ Reconferir o model card a cada atualização de versão — licença de peso pod
 | Fish Speech / OpenAudio S1-mini | CC-BY-NC-SA-4.0 | Código Apache, pesos NC |
 | XTTS-v2 (Coqui) | CPML | Não-comercial |
 | IndexTTS-2 | Restritiva | Comercial exige contato com os autores |
+| MusicGen / AudioCraft (Meta) | CC-BY-NC-4.0 | Código MIT, **pesos NC** — descartado como motor de trilha por isso |
 
 **Não usar nem para teste cujo áudio venha a ser publicado.**
 
@@ -31,6 +48,7 @@ Reconferir o model card a cada atualização de versão — licença de peso pod
 | Item | Licença | Nota |
 |---|---|---|
 | `chatterbox-tts` (código) | MIT | — |
+| `acestep` (código) | Apache-2.0 | Geração da trilha, em venv separada |
 | PyTorch | BSD-3 | wheels cu130 |
 | faster-whisper / CTranslate2 | MIT | QA por ASR |
 | FFmpeg | LGPL/GPL conforme build | Usado como ferramenta, não redistribuído |
