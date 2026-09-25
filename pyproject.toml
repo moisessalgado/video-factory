@@ -5,6 +5,13 @@ description = "Pipeline local de audiolivros narrados por IA"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "chatterbox-tts",
+    # O encoder de voz do chatterbox chama `librosa.resample(res_type=...)`
+    # numa variante que precisa do `resampy` -- e nem o chatterbox nem o
+    # librosa declaram isso como dependencia. Sem o pin aqui, um `uv sync`
+    # limpa o pacote da venv (nao esta no lockfile) e a sintese quebra na
+    # primeira chamada ao encoder, so na hora de verificar a identidade da
+    # voz. Visto em 01/09/2026.
+    "resampy",
     "soundfile",
     "numpy",
     "pydantic>=2",
@@ -16,10 +23,49 @@ dependencies = [
     "ebooklib",
     "beautifulsoup4",
     "pymupdf",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    # `voice template` sintetiza a referencia da voz com o Kokoro (Apache-2.0).
+    # Foi assim que narrador-v1, narrador-v2 e citacao-v1 nasceram, entao nao e
+    # opcional: sem declarar, um `uv sync` arranca o Kokoro e o comando quebra.
+    "kokoro",
 ]
+
+[dependency-groups]
+# Declarado para que o `uv sync` nao leve o pytest junto -- ele ja levou.
+dev = ["pytest"]
 
 [project.scripts]
 audio-factory = "audiofactory.cli.main:app"
+
+# O `chatterbox-tts` FIXA `torch==2.6.0+cu124`, que nao roda em sm_120 (a RTX
+# 5060 Ti desta maquina): "no kernel image is available for execution on the
+# device". Sem os overrides abaixo, um `uv sync` inocente -- para instalar uma
+# dependencia nova qualquer -- rebaixa o torch e derruba a GPU inteira, e o
+# sintoma so aparece na primeira sintese. Ja aconteceu em 01/09/2026.
+#
+# `override-dependencies` faz o uv ignorar o pin do chatterbox; `tool.uv.sources`
+# manda buscar as rodas cu130 no indice da PyTorch, e nao no PyPI. O reparo
+# manual continua em ESTADO.md, para quem chegar num venv ja quebrado.
+#
+# `setuptools<81` e outro caso da mesma familia: o `resemble-perth`
+# (watermark do Chatterbox, `LICENSES.md` exige "manter sempre") importa
+# `pkg_resources` sem declarar a dependencia. Setuptools removeu esse modulo a
+# partir da 81, e sem o pin o sintoma so aparece na hora de sintetizar --
+# `PerthImplicitWatermarker` vira `None` e a mensagem e um `TypeError:
+# 'NoneType' object is not callable` sem pista nenhuma de watermark. Visto em
+# 01/09/2026.
+[tool.uv]
+override-dependencies = ["torch==2.13.0", "torchaudio==2.11.0", "setuptools<81"]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
 
 [build-system]
 requires = ["hatchling"]

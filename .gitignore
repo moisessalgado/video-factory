@@ -1,5 +1,6 @@
 .venv/
 .venv-musica/
+.venv-imagem/
 models/
 cache/
 projects/
@@ -12,10 +13,20 @@ __pycache__/
 # NUNCA versionar vozes de referencia (TDD secao 15)
 voices/
 
-# Acervo de slides: 52 imagens, 25 MB. Fora do git de proposito -- entraria no
-# historico para sempre e nao ha por que carregar isso num clone. Origem e
-# licenca em LICENSES.md; sem a pasta, use --preset gradiente ou --slides-dir.
+# Acervo do canal, fora do git de proposito: sao 25 MB de imagem
+# (assets/slides, 52 JPEG) e ~100 MB de musica (assets/musica, as pecas
+# aprovadas do ACE-Step). Binario grande entra no historico para sempre e nao ha
+# por que carregar isso num clone. Origem e licenca em LICENSES.md.
+#
+# Sem assets/slides, use --preset gradiente ou --slides-dir. Sem assets/musica,
+# o `video` regenera as pecas na primeira vez -- a seed sai da paleta, entao
+# elas voltam identicas, so custam GPU.
 assets/
 
 # Takes soltos na raiz, de teste manual
 /*.wav
+
+# Credenciais OAuth do YouTube (Data API v3) -- nunca versionar
+config/youtube_client_secret.json
+config/youtube_token*
+config/youtube_canal_token*
