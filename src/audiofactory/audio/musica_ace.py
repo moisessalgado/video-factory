@@ -27,6 +27,20 @@ from .musica import SAMPLE_RATE, _ffmpeg
 
 VENV = RAIZ / ".venv-musica"
 CHECKPOINT = RAIZ / "models" / "ace-step"
+
+# Duas pastas, e a divisao entre elas nao e organizacao: e o que pode ser
+# apagado sem consequencia.
+#
+# `cache/musica` guarda o BRUTO do modelo (48 kHz estereo, 23 MB por peca) e as
+# sobras de experimento. Apagar custa GPU e mais nada -- a peca volta identica,
+# porque a seed sai da paleta.
+#
+# `assets/musica` guarda a peca PRONTA, no formato que entra no video. Ela e
+# acervo do canal, do mesmo tipo que `assets/slides`: os videos ja publicados
+# soam com ela, e apagar significa que um capitulo remontado amanha nao combina
+# mais com os irmaos que foram ao ar. O determinismo da seed protege contra
+# gerar diferente, nao contra perder o arquivo.
+ACERVO = RAIZ / "assets" / "musica"
 CACHE = RAIZ / "cache" / "musica"
 
 # Duracao de cada peca gerada. O ACE-Step aguenta ~4 min, mas peca longa nao
@@ -58,6 +72,28 @@ _BASE_DRONE = ("ambient, instrumental, meditative, drone, sustained, continuous,
                "unchanging, mid register, rich overtones, warm, resonant, hypnotic, "
                "no melody, no chord changes, no drums, no percussion, no beat, "
                "no vocals")
+
+# Tentativa 1 (nao repetir): lista longa de "no jazz, no strings, no synth..."
+# saiu pior, nao melhor -- o ACE-Step nao tem campo de negative prompt (conferido
+# na assinatura de `ACEStepPipeline.__call__`), so um `prompt` unico. Uma pilha
+# de negacoes nesse campo parece ser lida como TAG, nao como proibicao: pediu
+# "no jazz" e saiu jazz. As tres pecas que sobreviveram ao descarte do operador
+# sao todas da familia `contemplativo`, cujos prompts sao curtos e so afirmam o
+# que devem ser. `_BASE_PIANO` segue a mesma receita: afirma "solo piano
+# performance" e "unaccompanied" em vez de negar orquestra, e usa generos reais
+# de catalogo (new age, meditation music) em vez de excluir jazz/blues/pop.
+# So mantem a negacao ja provada no `_BASE` (bateria/vocal), que funciona nas
+# pecas aprovadas.
+_BASE_PIANO = ("solo piano performance, unaccompanied, "
+               "new age, meditation music, "
+               "ambient, instrumental, slow tempo, sparse, gentle, warm, "
+               "contemplative, soft reverb, spacious, quiet, "
+               "no drums, no percussion, no beat, no vocals")
+
+_BASE_FLAUTA = ("solo bamboo flute performance, unaccompanied, "
+                "ambient, instrumental, meditative, slow tempo, sparse, gentle, warm, "
+                "contemplative, soft reverb, spacious, quiet, "
+                "no drums, no percussion, no beat, no vocals")
 
 # Timbres acusticos por padrao. A queixa original era "extraterrestre", e pad de
 # sintetizador e exatamente o caminho de volta para la.
@@ -101,13 +137,46 @@ PALETAS: dict[str, tuple[str, ...]] = {
         "bass clarinet, breathy, long tones",
         "muted piano, felt, distant",
     ),
+    # Piano solo, nada mais -- sem cordas, sem duo. Diferente de "contemplativo",
+    # que mistura piano com cordas friccionadas; aqui o instrumento e um so, do
+    # inicio ao fim. Pegada oriental/meditativa como afirmacao (generos reais de
+    # catalogo), nunca como negacao de jazz/blues -- ver o comentario de
+    # `_BASE_PIANO` sobre por que negacao nao funciona aqui.
+    # 01 e 02 sao as aprovadas pelo operador -- texto intocado de proposito
+    # (mexer invalidaria o hash e as pecas ja salvas). As duas tem em comum um
+    # genero real de catalogo (pentatonic melody / japanese ambient) em vez de
+    # so adjetivo solto (zen, healing, tranquil), que foi o que as 4 rejeitadas
+    # tinham. O refinamento aqui persegue essa pista: mais ancora de genero,
+    # menos adjetivo vago.
+    "piano": (
+        "solo piano performance, japanese ambient, pentatonic melody, slow tempo",
+        "solo piano performance, pentatonic melody, minimalist, sparse notes",
+        "solo piano performance, japanese ambient, floating, unhurried",
+        "solo piano performance, east asian ambient, minimalist, soft dynamics",
+        "solo piano performance, pentatonic melody, warm, sparse, unhurried",
+        "solo piano performance, japanese ambient, spacious, quiet, floating",
+    ),
+    # Candidata a testar (TDD 18, pedido do operador) -- nenhuma peca aqui foi
+    # ouvida ainda, entao o texto pode mudar sem custo de invalidar cache aprovado.
+    # Sopro nao tem ataque percussivo -- mesma familia de motivo que aprovou piano
+    # e cordas friccionadas e rejeitou corda pinçada. Seis tradicoes de flauta de
+    # bambu distintas (nao seis frases do mesmo instrumento) para o operador
+    # escolher timbre, nao so confirmar que "flauta funciona".
+    "flauta": (
+        "shakuhachi, japanese ambient, breathy tone",
+        "bansuri, indian classical, meditative",
+        "native american flute, breathy, sustained notes",
+        "andean quena, andean folk, breathy, high register",
+        "shakuhachi, zen, floating, unhurried",
+        "dizi, chinese ambient, breathy, soft dynamics",
+    ),
 }
 
 
 def prompts(paleta: str = "contemplativo") -> tuple[str, ...]:
     if paleta not in PALETAS:
         raise ValueError(f"paleta desconhecida: {paleta} — use {', '.join(PALETAS)}")
-    base = _BASE_DRONE if paleta == "drone" else _BASE
+    base = {"drone": _BASE_DRONE, "piano": _BASE_PIANO, "flauta": _BASE_FLAUTA}.get(paleta, _BASE)
     return tuple(f"{timbre}, {base}" for timbre in PALETAS[paleta])
 
 
@@ -129,11 +198,14 @@ def _seed(paleta: str, i: int) -> int:
 def gerar_pecas(paleta: str = "contemplativo", n: int = N_PECAS,
                 peca_s: float = PECA_S, sample_rate: int = SAMPLE_RATE,
                 inicio: int = 0, progresso=None) -> list[Path]:
-    """Gera (ou reaproveita do cache) as pecas do leito, ja em 24 kHz mono.
+    """Gera (ou reaproveita) as pecas do leito, ja em 24 kHz mono.
 
-    O cache e o que torna a coisa viavel: gerar 12 min de musica custa minutos de
-    GPU, e as pecas nao dependem do capitulo -- so da paleta. Um projeto novo
-    reusa o leito do anterior sem gastar nada.
+    Reaproveitar e o que torna a coisa viavel: gerar 12 min de musica custa
+    minutos de GPU, e as pecas nao dependem do capitulo -- so da paleta. Um
+    projeto novo reusa o leito do anterior sem gastar nada.
+
+    Sai em `ACERVO`; o bruto de 48 kHz fica em `CACHE`. Ver o cabecalho das duas
+    constantes para o porque da separacao.
     """
     if not disponivel():
         raise RuntimeError(
@@ -141,14 +213,22 @@ def gerar_pecas(paleta: str = "contemplativo", n: int = N_PECAS,
             f".venv-musica && uv pip install --python .venv-musica/bin/python "
             f"git+https://github.com/ace-step/ACE-Step.git`")
     CACHE.mkdir(parents=True, exist_ok=True)
+    ACERVO.mkdir(parents=True, exist_ok=True)
     ps = prompts(paleta)
     # O prompt entra na chave do cache. Sem isso, reescrever um timbre nao
     # invalidava nada e o leito continuava sendo o antigo -- um erro silencioso,
     # do pior tipo: o codigo diz uma coisa e o arquivo em disco e outra.
     idx = list(range(inicio, inicio + n))
     marca = [hashlib.sha256(ps[i % len(ps)].encode()).hexdigest()[:8] for i in idx]
-    finais = [CACHE / f"{paleta}-{i:02d}-{marca[k]}-{int(peca_s)}s-{sample_rate}.wav"
+    finais = [ACERVO / f"{paleta}-{i:02d}-{marca[k]}-{int(peca_s)}s-{sample_rate}.wav"
               for k, i in enumerate(idx)]
+    # As pecas nasceram no cache, antes de `assets/musica` existir. Mover na
+    # primeira passada e mais barato do que gerar de novo, e mantem a musica dos
+    # videos ja publicados bit a bit igual.
+    for final in finais:
+        antigo = CACHE / final.name
+        if not final.exists() and antigo.exists():
+            antigo.replace(final)
     # O modelo entrega 48 kHz estereo; o bruto fica ao lado do convertido para
     # que uma troca de sample_rate nao obrigue a gerar tudo de novo.
     brutos = [CACHE / f"{paleta}-{i:02d}-{marca[k]}-{int(peca_s)}s-bruto.wav"

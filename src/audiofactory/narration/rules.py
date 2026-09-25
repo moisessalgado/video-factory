@@ -78,14 +78,27 @@ def _num(n: int | float, ordinal: bool = False) -> str:
     return out.replace(",", "")
 
 
+def _preservar_caixa(original: str, novo: str) -> str:
+    """A grafia do lexico e minuscula; devolve `novo` na caixa que o texto usava
+    (inicio de frase capitaliza, mas o lexico nao precisa de uma entrada por caixa)."""
+    if original.isupper():
+        return novo.upper()
+    if original[:1].isupper():
+        return novo[:1].upper() + novo[1:]
+    return novo
+
+
 def _expand_lexicon(text: str, lexicon: dict[str, str]) -> tuple[str, list]:
-    """Aplica o lexico de pronuncia (nomes proprios, termos indigenas)."""
+    """Aplica o lexico de pronuncia (nomes proprios, termos indigenas, ortografia
+    antiga). Casa sem diferenciar caixa -- a mesma palavra aparece capitalizada no
+    inicio de frase e minuscula no meio -- preservando a caixa encontrada."""
     applied = []
     for grafia in sorted(lexicon, key=len, reverse=True):
-        pattern = re.compile(rf"\b{re.escape(grafia)}\b")
+        pattern = re.compile(rf"\b{re.escape(grafia)}\b", re.IGNORECASE)
+        novo = lexicon[grafia]
         if pattern.search(text):
-            text = pattern.sub(lexicon[grafia], text)
-            applied.append((grafia, lexicon[grafia]))
+            text = pattern.sub(lambda m, novo=novo: _preservar_caixa(m.group(0), novo), text)
+            applied.append((grafia, novo))
     return text, applied
 
 
@@ -119,6 +132,20 @@ def normalize(text: str, lexicon: dict[str, str] | None = None) -> Normalization
     if lexicon:
         text, lex_applied = _expand_lexicon(text, lexicon)
         applied += lex_applied
+
+    # Convenção tipográfica de textos antigos (pré-reforma ortográfica de 1943):
+    # "E'" para "É" quando a máquina de escrever/tipografia não tinha o acento.
+    # Medido em texto de 1931 (Wikisource): 13 ocorrências, e sem normalizar o
+    # TTS trava/derrapa nesse token incomum -- mesma classe de problema que
+    # abreviação, resolvida antes do resto para não interferir com as regras
+    # de pontuação seguintes. Só "E'" -- não há evidência de "A'" no texto
+    # medido, então não generalizar sem medir de novo.
+    def _apostrofo_acento(m):
+        novo = "É" if m.group(1) == "E" else "é"
+        applied.append((m.group(0), novo))
+        return novo
+
+    text = re.sub(r"\b([Ee])'(?=\s)", _apostrofo_acento, text)
 
     # Abreviacoes (antes dos numeros: "séc. XVII" depende disso)
     for abbr, full in sorted(ABREVIACOES.items(), key=lambda kv: -len(kv[0])):
