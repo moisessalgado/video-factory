@@ -427,15 +427,113 @@ uv pip install --python .venv-musica/bin/python git+https://github.com/ace-step/
 Boa notícia: **a armadilha do cu124 não se repete aqui.** O `torch` do PyPI já resolve para
 `2.13.0+cu130`, que roda em sm_120 — não é preciso o passo de reinstalação por índice.
 
-Os pesos (8,3 GB) baixam sozinhos na primeira geração, para `models/ace-step/`. As peças ficam em
-`cache/musica/` e **não dependem do capítulo nem do projeto**, só da paleta: gerar uma vez serve
-para todos os livros.
+Os pesos (8,3 GB) baixam sozinhos na primeira geração, para `models/ace-step/`. As peças **não
+dependem do capítulo nem do projeto**, só da paleta: gerar uma vez serve para todos os livros.
+
+**A trilha é o padrão do `video` desde 2026-08-31.** Antes o padrão era `nenhuma`, e o resultado
+previsível: o vídeo do sutta foi renderizado mudo sem que ninguém tivesse decidido isso. O canal
+publica com trilha; quem quer sem, pede. Numa máquina sem a `.venv-musica`, o padrão degrada com
+aviso e renderiza só a narração — mas `--musica ace` *pedido* na linha de comando continua sendo
+erro, que é a diferença entre "esta máquina não tem" e "pedi e não veio".
 
 ```bash
-audio-factory video dhammacakka --musica ace            # paleta contemplativo
+audio-factory video dhammacakka                         # trilha contemplativo, de fábrica
 audio-factory video dhammacakka --musica ace:sobrio     # cordas graves, mais sóbrio
 audio-factory video dhammacakka --musica gerada         # sintetizador antigo, sem GPU
+audio-factory video dhammacakka --musica nenhuma        # sem trilha
 ```
+
+### Onde a música fica
+
+Duas pastas, e a divisão é **o que pode ser apagado sem consequência**:
+
+| Pasta | O quê | Apagar custa |
+|---|---|---|
+| `assets/musica/` | as peças prontas (24 kHz mono), 12 aprovadas, ~100 MB | os vídeos já publicados soam com elas — um capítulo remontado depois de perder o arquivo não combina mais com os irmãos que foram ao ar |
+| `cache/musica/` | o bruto do ACE-Step (48 kHz estéreo, 23 MB/peça) e as sobras de experimento | GPU, e só |
+
+É a mesma distinção de `assets/slides`: acervo do canal de um lado, subproduto regenerável do
+outro. As peças que estavam em `cache/musica/` **são movidas sozinhas** para `assets/musica/` na
+primeira vez que o `video` roda — mover em vez de regerar mantém a música dos vídeos publicados
+bit a bit igual.
+
+`assets/` inteiro continua fora do git (ver `.gitignore`). Num clone limpo a pasta não existe e as
+peças são geradas de novo; como a seed sai do nome da paleta, voltam idênticas.
+
+## Trilha de fundo: MusicGen Stereo, comparativo ao ACE-Step (2026-09-01)
+
+O operador achou a maioria das peças do ACE-Step feia — da paleta `flauta`, só uma das seis
+sobreviveu à escuta. `audio/musica_musicgen.py` traz o **MusicGen Stereo 3.3B** (Meta AudioCraft)
+como motor alternativo, mesmas paletas (mesmo nome, mesmo timbre-alvo) para comparação lado a
+lado. Os pesos são CC-BY-NC-4.0 — antes descartado por isso (ver histórico do `LICENSES.md`), mas
+o operador confirmou em 2026-09-01 que **o canal não publica comercialmente**, o que torna o uso
+aceitável. Ver `LICENSES.md` para a ressalva completa, inclusive o que fazer se o canal passar a
+monetizar.
+
+⚠️ **Venv separada da do ACE-Step, não só do resto do pipeline:** nenhuma razão para as duas
+dependerem da mesma fixação de `transformers`/`torch`. A fronteira é um subprocesso que troca JSON
+e WAV (`audio/_musicgen_runner.py`), mesmo desenho do `_ace_runner.py`.
+
+```bash
+uv venv --python 3.12 .venv-musica-mg
+uv pip install --python .venv-musica-mg/bin/python transformers accelerate soundfile scipy sentencepiece
+```
+
+O `torch` do PyPI resolveu sozinho para `2.13.0+cu130` aqui também — mesma sorte do ACE-Step, sem
+precisar do índice `cu130` à parte (diferente da venv de imagem).
+
+Diferença de desenho que importa: o MusicGen degrada (repete, deriva de tom) em geração contínua
+além de ~30 s — é o tamanho de trecho predominante no treino. Por isso a peça do MusicGen é mais
+curta que a do ACE-Step (30 s contra 120 s) e o leito usa mais peças por padrão (8 contra 6) para
+cobrir duração parecida de material inédito — a variedade continua vindo de peças emendadas, não
+de uma peça longa.
+
+```bash
+audio-factory musica --motor musicgen --paleta flauta      # gera as peças, para ouvir antes
+audio-factory video dhammacakka --musica musicgen           # trilha padrão do MusicGen
+audio-factory video dhammacakka --musica musicgen:sobrio    # paleta específica
+```
+
+As peças do MusicGen entram no mesmo `assets/musica/` do ACE-Step, com prefixo `mg-` no nome do
+arquivo para não colidir — mesma divisão acervo/cache, mesmo motivo (ver seção anterior).
+
+## Slides: geração local com FLUX + SD3.5 (2026-08-31)
+
+Antes, todo o acervo de `assets/slides/` vinha do Midjourney. Agora é possível gerar novas imagens
+localmente com **FLUX.1-schnell** (Apache-2.0) e **Stable Diffusion 3.5** (Stability AI Community
+License), pelo mesmo motivo de sempre: licença comercial em todas as camadas, sem serviço pago em
+runtime. Ver `LICENSES.md` para a auditoria completa, incluindo por que `FLUX.1-dev` fica de fora
+(licença não-comercial).
+
+⚠️ **Venv separada, não negociável** — mesma razão do ACE-Step: `diffusers`/`transformers` não
+precisam conviver com as versões fixadas pelo resto do pipeline. A fronteira é um subprocesso que
+troca JSON e PNG (`video/_imagem_runner.py`), nenhum objeto Python atravessa.
+
+```bash
+uv venv --python 3.12 .venv-imagem
+uv pip install --python .venv-imagem/bin/python diffusers transformers accelerate \
+    sentencepiece protobuf torch torchvision --index-url https://download.pytorch.org/whl/cu130
+```
+
+**SD3.5 é *gated* no Hugging Face** (FLUX.1-schnell não é): é preciso aceitar a licença no model
+card (`stabilityai/stable-diffusion-3.5-medium` e/ou `-large`) e autenticar — `huggingface-cli
+login` ou `HF_TOKEN` no ambiente — antes do primeiro `audio-factory imagem --modelo sd`.
+
+Fluxo de uso, em duas etapas separadas de propósito — nem toda imagem gerada presta, e a curadoria
+é humana, diferente da trilha (onde a paleta inteira vira acervo automaticamente):
+
+```bash
+audio-factory imagem "paisagem oriental ao entardecer, aquarela" --modelo flux --n 4
+# candidatos em cache/imagens/ — olhe, escolha os que prestam
+audio-factory imagem-aprovar cache/imagens/flux-a1b2c3d4-123456789.png
+# vira JPEG q2 ≤1920px em assets/slides/, mesmo padrão das imagens do Midjourney
+```
+
+`--modelo sd` usa SD3.5-**Medium** por padrão (2,5B parâmetros, cabe em 16 GB sem offload, mais
+rápido); `--modelo sd:large` troca para o Large (8B, melhor qualidade, mais VRAM — o runner liga
+`enable_model_cpu_offload()` para caber mesmo assim). Passos e guidance têm padrão por família
+(FLUX-schnell é destilado: 4 passos, guidance 0 — CFG não faz nada nesse modelo; SD3.5 é
+convencional: 28 passos, guidance 4,5) e podem ser sobrepostos com `--passos`/`--guidance`.
 
 ## Fundo do vídeo: slides (padrão desde 2026-08-31)
 
@@ -457,12 +555,158 @@ audio-factory video dhammacakka --preset gradiente       # o fundo antigo
   use `--slides-dir` apontando para o acervo, ou `--preset gradiente`. O acervo vive na máquina
   que publica; origem e licença em `LICENSES.md`.
 - O acervo é conferido **antes** do laço de capítulos, como a paleta da trilha.
-- Custo: **~6× tempo real** com `h264_nvenc` (100 s de áudio em 16 s), contra ~4× do `gradiente`.
 - As imagens são quadradas ou panorâmicas, quase nenhuma em 16:9. Entram inteiras, e o resto do
-  quadro recebe a própria imagem ampliada e desfocada — o desfoque é feito em 192×108 e esticado,
+  quadro recebe a própria imagem ampliada e desfocada — o desfoque é feito pequeno e esticado,
   porque `gblur` em 1080p custaria caro em todo quadro de um still parado 45 s.
-- **Véu no rodapé** (300 px, até 70% de preto) só quando há legenda queimada: o `gradiente` era
-  escuro por baixo do texto de graça, arte clara não é.
+- **Véu no rodapé** (420 px, até 85% de preto, rampa com expoente 2,4) só quando há legenda
+  queimada: o `gradiente` era escuro por baixo do texto de graça, arte clara não é.
+
+### As listras nas tarjas laterais (consertado em 2026-08-31)
+
+O primeiro MP4 com slides saiu com listras de cor nas tarjas borradas. Não era uma causa, eram
+três, e as três estão no caminho do degradê quase plano do borrão:
+
+1. **`-cq 31` no NVENC** rendia **380 kb/s em 1080p**. O codificador gastava esse orçamento onde
+   havia detalhe, e as áreas lisas saíam com blocos inteiros no mesmo valor. Agora `cq 20` com
+   `spatial-aq` — que existe justamente para repartir o orçamento a favor das áreas lisas, que é
+   onde o olho enxerga banda. Custa ~3× o arquivo (46 MB → ~150 MB em onze minutos), irrelevante
+   num upload único.
+2. **Borrão calculado em 192×108.** Um pixel virava um bloco de 10×10 na tela, e o degradê que
+   sobrava tinha passos largos demais para o `scale` interpolar. Agora 480×270 com `sigma=15` —
+   mesmo raio em fração do quadro, passo de 4 px.
+3. **8 bits.** Rampa quase plana bandeia por aritmética, antes de qualquer codec. O grafo agora
+   trabalha em `gbrp10le` e só despeja para 8 bits no último elo, com `zscale=dither=error_diffusion`.
+
+Medido no degrau médio da tarja lateral (comprimento das corridas de valor idêntico ao longo
+de Y — quanto maior, mais larga a listra), no mesmo slide do ch01: **13,2 px → 1,9 px**. Num
+still isolado, onde o codificador tem orçamento de sobra e o defeito é mais difícil de
+provocar: 5,1 → 2,5 px, com PSNR contra o quadro não codificado subindo de 37,7 para 46,4 dB.
+
+De brinde, a saída deixou de ser `yuvj420p` (faixa cheia, marcada) e passa a ser `yuv420p` bt709
+faixa limitada, convertida de verdade — player que ignora a marca esmagava preto e branco.
+
+- Custo medido no ch01 (11 min 10 s de áudio, `h264_nvenc`): **2 min 22 s de parede**, ou
+  ~4,7× tempo real, contra ~6× antes. O arquivo foi de 46 MB para 124 MB.
+- **O véu é estático.** Ele vinha de um `gradients`, que anima por padrão — a cor circula em
+  `speed` — e o rodapé pulsava a noite toda. Movimento sem motivo, exatamente o que o resto do
+  módulo evita. Agora um `geq` desenha a rampa **uma vez** (`trim=end_frame=1` + `loop`), o que de
+  quebra tira o custo por quadro: `geq` sobre 1920×420 px em 16 mil quadros não é barato.
+
+## Suttas do Acesso ao Insight — `sutta <url>` ✅
+
+Um comando faz o pipeline inteiro a partir de uma página de
+[acessoaoinsight.net](https://www.acessoaoinsight.net): baixa, limpa, monta o script,
+sintetiza, masteriza, renderiza o MP4 e sobe para o YouTube como privado. Aceita
+vários endereços de uma vez, porque o objetivo é uma série de vídeos e não um.
+Documentação de uso em [`docs/suttas.md`](docs/suttas.md).
+
+```bash
+audio-factory sutta ANIV.45 SNLVI.11 MN58        # o código do índice basta
+audio-factory sutta ANIV.45 --ate script         # para para você ler o diff.md
+```
+
+Voz padrão: **`narrador-v2`** (`pm_alex` a 0,75 da velocidade). Sutta se acompanha
+devagar, e é a voz que `dhammacakka` e `satipatthana` já usavam — o default nasceu
+errado, na `v1`, e foi corrigido em 01/09/2026. Medido nos projetos em `v2`:
+identidade média 0,934–0,942, na mesma faixa da `v1`.
+
+**Verificado ponta a ponta em 01/09/2026** com o `ANIV.45` (Rohitassa Sutta):
+17/17 chunks `ok`, RTF 0,45, identidade de voz média 0,947 (pior 0,914), master a
+**−16,1 LUFS**, MP4 1920×1080 de 3:04, publicado como privado
+(`bBexVhAk4tI`) com miniatura extraída do próprio MP4. A segunda execução do
+mesmo comando recusou o upload pelo `output/publicado.json`, como previsto.
+
+### O que a página exigiu que o parser soubesse
+
+Estrutura medida em **40 páginas sorteadas do índice**: 40/40 com um `Tit3`
+(referência) e dois `Tit1` (pali, português), 40/40 com o bloco de licença, 37/40
+com dois `<hr>` e 3/40 com um só — os três são suttas curtos sem seção de notas.
+Daí a regra: o corpo vai do PRIMEIRO `<hr>` ao ÚLTIMO; havendo um só, até o fim.
+
+Quatro armadilhas que custaram medição:
+
+1. **`charset=ISO-8859-1` é mentira** — é `windows-1252`. As aspas curvas do Word
+   ocupam 0x93/0x94, que em latin-1 são caracteres de *controle*. Decodificar pelo
+   charset declarado entrega `\x93É possível`, e são justamente essas aspas que o
+   `text/roles.py` usa para achar a fala citada.
+2. **Endereço inexistente devolve HTTP 200** com uma página de busca genérica. Sem
+   checar o marcador `INICIO DO TEXTO`, um código errado criaria um projeto vazio e
+   só quebraria no `export`, depois da síntese.
+3. **`<br>` é verso; a quebra de linha crua não é.** O Word quebra a fonte na coluna
+   78, no meio de "Assim ouvi". Preservar as duas corta frases ao meio.
+4. **O último `<p>` carrega o `<!--` que abre o rodapé**, sem `>` para fechar — e a
+   remoção de tags só casa tag fechada. Sem guarda, `<!--` virava parágrafo e ia ao TTS.
+
+### A referência da coleção não é narrada — por medição
+
+`normalize("Anguttara Nikaya IV.45")` devolve **"Anguttara Nikaya IVquarenta e
+cinco"**: o romano fica sem leitura e o `.45` vira cardinal colado. A referência vive
+no título do vídeo e na descrição. A abertura narrada é só `<pali>. <título em
+português>.`, e o português é omitido quando repete o pali ("Rohitassa Sutta" /
+"Rohitassa").
+
+### `rights` é `licenciado`, e monetizar contraria os termos
+
+O sutta é antigo; a **tradução** é obra derivada com direito próprio do tradutor —
+o risco alto do TDD §14.3. Declarar `dominio-publico` aqui seria falso. A licença
+("Somente para distribuição gratuita … contanto que nenhum custo seja cobrado pela
+distribuição ou uso") é colhida da própria página, gravada em `rights.licenca` e
+**reproduzida literal na descrição do vídeo** — é assim que os termos viajam com a
+obra derivada.
+
+O comando **avisa** que monetizar vai contra a licença e **não bloqueia** nada: a
+decisão editorial continua sendo do operador, como já decidido neste arquivo.
+`verificado_em` fica `null` de propósito — data de download não é data de
+conferência.
+
+### Publicar duas vezes era um furo real
+
+`videos.insert` **não é idempotente**: repetir o comando cria OUTRO vídeo no canal.
+Como o `sutta` existe para ser re-rodado (é assim que se retoma um lote), um upload
+feito passou a ser registrado em `output/publicado.json`, e o segundo é recusado.
+`--republicar` sobe outra cópia de propósito. A guarda vale para o `publish`
+avulso também.
+
+### Refactor que isto obrigou
+
+Os corpos de `script`, `run`, `build`, `export`, `video` e `publish` viraram
+`_etapa_*(p, ...)` com defaults de verdade, e os comandos Typer viraram invólucros.
+Motivo: os defaults de um comando Typer são objetos `OptionInfo`, não valores —
+chamar `run(slug)` de dentro de outro comando passaria `OptionInfo` como `workers`.
+
+### O `uv sync` derrubou a GPU — agora o pyproject impede
+
+**01/09/2026:** um `uv sync` rodado só para instalar as dependências novas do
+`publish` re-resolveu o `torch` para o **`2.6.0+cu124`** que o `chatterbox-tts`
+fixa, e toda síntese passou a morrer com `no kernel image is available for
+execution on the device`. É a armadilha do topo deste arquivo, disparada sem que
+ninguém tocasse no torch de propósito.
+
+O reparo manual continua válido (topo do arquivo). O que mudou é que ele não
+deve ser preciso de novo: o `pyproject.toml` passou a declarar
+
+```toml
+[tool.uv]
+override-dependencies = ["torch==2.13.0", "torchaudio==2.11.0"]
+```
+
+mais um `[[tool.uv.index]]` apontando as rodas cu130. O `uv lock` agora resolve
+para `torch 2.13.0+cu130`, e `uv sync --dry-run` não mexe mais no torch.
+
+**Duas dependências não declaradas apareceram na mesma investigação** — o
+`uv sync` as arrancava porque nenhum arquivo dizia que elas eram necessárias:
+
+- **`kokoro`**, que o `voice template` usa para sintetizar a referência. Foi assim
+  que `narrador-v1`, `narrador-v2` e `citacao-v1` nasceram.
+- **`pytest`**, agora em `[dependency-groups] dev`.
+
+### O `sutta` confere a GPU antes do laço
+
+Um venv quebrado derrubava **todos** os endereços da lista, um por um, cada um com
+a mesma pilha de CUDA. A checagem foi para antes do laço, junto com as que já
+existiam por esse motivo (acervo de slides, venv de música). E ela lança um kernel
+de verdade: `cuda.is_available()` devolve `True` com o torch cu124 sobre sm_120 —
+a falha só aparece no primeiro `matmul`.
 
 ## Calibrações medidas (não re-derivar)
 
