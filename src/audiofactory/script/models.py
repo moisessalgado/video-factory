@@ -65,6 +65,11 @@ class Rights(BaseModel):
     ano_morte: int | None = None
     tradutor: str | None = None
     fonte: str | None = None
+    # Termos da licenca, nas palavras de quem publicou o texto. Guardados na
+    # integra e nao resumidos: uma licenca de distribuicao gratuita costuma ter
+    # condicoes ("desde que nenhum custo seja cobrado") que precisam viajar
+    # junto com a obra derivada -- e a descricao do video as reproduz.
+    licenca: str | None = None
     verificado_em: str | None = None
 
 

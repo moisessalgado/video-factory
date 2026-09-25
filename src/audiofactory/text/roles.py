@@ -18,6 +18,13 @@ PAPEL_CITACAO = "citacao"
 # Aspas retas, curvas e simples; travessao de dialogo no inicio da linha.
 _ASPAS = re.compile(r'"([^"]{12,})"|[“]([^”]{12,})[”]|\'([^\']{12,})\'')
 _TRAVESSAO = re.compile(r"^\s*[—–-]\s*(.+)$", re.MULTILINE)
+# So para o paragrafo INTEIRO ser uma fala (nao a heuristica frouxa de
+# `tem_dialogo`, que aceita ate hifen solto): exige travessao/meia-risca de
+# verdade (nao hifen "-", que aparece toda hora em prosa comum e nao e
+# dialogo) e SO conta quando o paragrafo tem exatamente UM travessao no total
+# -- um segundo travessao costuma ser interjeicao do narrador embutida
+# ("-- Fala -- disse Fulano."), e essa mistura fica de fora de proposito.
+_TRAVESSAO_PARAGRAFO_INTEIRO = re.compile(r"^[—–]\s*(.+)$", re.DOTALL)
 # Marcacao explicita do usuario, para quando ele quiser controlar o elenco.
 _EXPLICITO = re.compile(r"\[\[voz:([a-z0-9_-]+)\]\]\s*(.+?)(?=\[\[voz:|$)",
                         re.IGNORECASE | re.DOTALL)
@@ -54,6 +61,20 @@ def dividir_por_papel(paragrafo: str) -> list[tuple[str, str]]:
     if resto:
         partes.append((PAPEL_NARRADOR, resto))
     partes = _consolidar(partes)
+
+    if not partes or (len(partes) == 1 and partes[0][0] == PAPEL_NARRADOR):
+        # Nenhuma aspa casou -- tenta o travessão de diálogo, só no caso
+        # inequívoco (parágrafo inteiro é UMA fala só, sem interjeição do
+        # narrador embutida). Sem isto, um livro que usa travessão em vez de
+        # aspas (a esmagadora maioria da ficção brasileira, travessão por
+        # parágrafo de fala) narra todo o diálogo na voz do narrador, e o
+        # elenco por personagem não tem o que promover.
+        m = _TRAVESSAO_PARAGRAFO_INTEIRO.match(paragrafo)
+        if m and (paragrafo.count("—") + paragrafo.count("–")) == 1:
+            fala = m.group(1).strip()
+            if len(fala) >= MIN_CARACTERES:
+                partes = [(PAPEL_CITACAO, fala)]
+
     if any(len(tr) < MIN_SINTETIZAVEL for _, tr in partes):
         # Diálogo picado (fala curta, atribuição curta, fala curta) não sobrevive à
         # troca de voz: cada caco vira um chunk defeituoso. Lido inteiro na voz do
