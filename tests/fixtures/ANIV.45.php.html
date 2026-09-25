@@ -1,0 +1,123 @@
+<!-- DEFINE PARAMETROS -->
+<!--INCLUI TOPO-->
+<!-- TOPO DE TODAS AS Pï¿½GINAS -->
+<!DOCTYPE html><html lang="pt-bt"><head><meta http-equiv="X-UA-Compatible" content="IE=edge" charset="ISO-8859-1"><meta name="viewport" content="width=device-width, initial-scale=1"><!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags --><meta name="keywords" content="theravada, hinayana, buddhism, budismo, buddhist, budista, buddha, buda, dhamma, dharma, sangha, pali canon, cï¿½none em pali, sutta, 
+vinaya, jhana, vipassana, tipitaka, meditaï¿½ï¿½o, burma, birmï¿½nia, mianmar, myanmar, sri lanka, sutta, sutra, tailï¿½ndia, reencarnaï¿½ï¿½o, religiï¿½o, renascimento, kamma, karma " /><meta name="description" content= "A mais completa biblioteca do Budismo Theravada em portuguï¿½s. Mais de 7.000 suttas traduzidos, ensaios e livros de vï¿½rios autores, guias de estudo e ï¿½udios." />
+<title>Acesso ao Insight - Budismo Theravada - ANIV45 </title>
+<link REL="SHORTCUT ICON" href="../img/favicon.ico"><!-- Jquery e Bootstrap --><script src="../bootstrap/jquery-2.2.4.min.js"></script><link rel="stylesheet" href="../bootstrap/bootstrap-3.3.7.min.css"><link rel="stylesheet" href="../bootstrap/bootstrap-theme-3.3.7.min.css"><script src="../bootstrap/bootstrap-3.3.7.min.js" ></script><link rel="stylesheet" href="../insight.css%3Fv=2.1.css"><script language="JavaScript" src="../func.js"> </script><script type="text/javascript" src="../expando.js">
+</script>
+<script>
+$(document).ready(function() {
+var pagina = $("#php-var-pagina").val();				switch(pagina){			case "sala_estudos":				$("#menu_sala_estudos").addClass("active");				break;			case "sutta_pitaka":				$("#menu_sutta_pitaka").addClass("active");				break;			case "indice_suttas":			case "indice_textos":				$("#menu_indice").addClass("active");				break;			case "livros ":			case "audiobook":			case "podcast":				$("#menu_material").addClass("active");				break;			case "dhp_alestorio":			case "sutta_alestorio":				$("#menu_random").addClass("active");				break;			case "ajuda":				$("#menu_ajuda").addClass("active");				break;		}	
+});
+
+//var enderecoBase = "http://www.acessoaoinsight.net";
+var enderecoBase = "";
+var enderecos1 = new Array("/dhp/dhp1.1.php","/dhp/dhp1.3.php","/dhp/dhp1.5.php","/dhp/dhp1.6.php","/dhp/dhp1.13.php","/dhp/dhp1.15.php","/dhp/dhp1.17.php","/dhp/dhp1.19.php","/dhp/dhp2.21.php","/dhp/dhp2.25.php","/dhp/dhp2.26.php","/dhp/dhp2.27.php","/dhp/dhp2.28.php","/dhp/dhp2.29.php","/dhp/dhp2.31.php","/dhp/dhp3.33.php","/dhp/dhp3.35.php","/dhp/dhp3.36.php","/dhp/dhp3.37.php","/dhp/dhp3.38.php","/dhp/dhp3.40.php","/dhp/dhp3.42.php","/dhp/dhp3.43.php","/dhp/dhp4.44.php","/dhp/dhp4.46.php","/dhp/dhp4.47.php","/dhp/dhp4.48.php","/dhp/dhp4.50.php","/dhp/dhp4.51.php","/dhp/dhp4.54.php","/dhp/dhp4.58.php","/dhp/dhp5.60.php","/dhp/dhp5.61.php","/dhp/dhp5.62.php","/dhp/dhp5.63.php","/dhp/dhp5.64.php","/dhp/dhp5.66.php","/dhp/dhp5.71.php","/dhp/dhp5.75.php","/dhp/dhp6.76.php","/dhp/dhp6.78.php","/dhp/dhp6.80.php","/dhp/dhp6.81.php","/dhp/dhp6.85.php","/dhp/dhp7.92.php","/dhp/dhp8.102.php","/dhp/dhp8.111.php","/dhp/dhp8.113.php","/dhp/dhp9.118.php","/dhp/dhp9.121.php","/dhp/dhp9.126.php","/dhp/dhp9.127.php","/dhp/dhp10.129.php","/dhp/dhp10.130.php","/dhp/dhp10.145.php","/dhp/dhp11.146.php","/dhp/dhp11.147.php","/dhp/dhp11.151.php","/dhp/dhp11.153.php","/dhp/dhp11.155.php","/dhp/dhp12.1.php","/dhp/dhp12.2.php","/dhp/dhp12.3.php","/dhp/dhp12.4.php","/dhp/dhp12.5.php","/dhp/dhp12.6.php","/dhp/dhp12.7.php","/dhp/dhp12.8.php","/dhp/dhp13.1.php","/dhp/dhp13.2.php","/dhp/dhp13.3.php","/dhp/dhp13.4.php","/dhp/dhp13.5.php","/dhp/dhp13.6.php","/dhp/dhp13.7.php","/dhp/dhp13.8.php","/dhp/dhp13.9.php","/dhp/dhp13.10.php","/dhp/dhp13.11.php","/dhp/dhp14.1.php","/dhp/dhp14.2.php","/dhp/dhp14.3.php","/dhp/dhp14.4.php","/dhp/dhp14.5.php","/dhp/dhp14.6.php","/dhp/dhp14.7.php","/dhp/dhp15.1.php","/dhp/dhp15.2.php","/dhp/dhp15.3.php","/dhp/dhp15.4.php","/dhp/dhp15.5.php","/dhp/dhp15.6.php","/dhp/dhp15.7.php","/dhp/dhp15.8.php","/dhp/dhp15.9.php","/dhp/dhp15.10.php","/dhp/dhp16.1.php","/dhp/dhp16.2.php","/dhp/dhp16.3.php","/dhp/dhp16.4.php","/dhp/dhp16.5.php","/dhp/dhp16.6.php","/dhp/dhp16.7.php","/dhp/dhp17.1.php","/dhp/dhp17.2.php","/dhp/dhp17.3.php","/dhp/dhp17.4.php","/dhp/dhp17.5.php","/dhp/dhp18.1.php","/dhp/dhp18.2.php","/dhp/dhp18.3.php","/dhp/dhp18.4.php","/dhp/dhp18.5.php","/dhp/dhp18.6.php","/dhp/dhp18.7.php","/dhp/dhp18.8.php","/dhp/dhp19.1.php","/dhp/dhp19.2.php","/dhp/dhp20.1.php","/dhp/dhp20.2.php","/dhp/dhp20.3.php","/dhp/dhp20.4.php","/dhp/dhp20.5.php","/dhp/dhp21.1.php","/dhp/dhp21.2.php","/dhp/dhp21.3.php","/dhp/dhp21.4.php","/dhp/dhp21.5.php","/dhp/dhp22.1.php","/dhp/dhp23.1.php","/dhp/dhp23.2.php","/dhp/dhp24.1.php","/dhp/dhp24.2.php","/dhp/dhp24.3.php","/dhp/dhp24.4.php","/dhp/dhp24.5.php","/dhp/dhp24.6.php","/dhp/dhp24.7.php","/dhp/dhp24.8.php","/dhp/dhp25.1.php","/dhp/dhp25.2.php","/dhp/dhp25.3.php","/dhp/dhp25.4.php","/dhp/dhp25.5.php","/dhp/dhp25.6.php","/dhp/dhp25.7.php","/dhp/dhp25.8.php","/dhp/dhp25.9.php","/dhp/dhp26.1.php");
+function dhpAleatorio(){
+ aleat = Math.random() * enderecos1.length;
+ aleat = Math.floor(aleat);
+ window.location.href = enderecoBase + enderecos1[aleat];
+}
+var enderecos = new Array("/sutta/It.1.php","/sutta/It.2.php","/sutta/It.3.php","/sutta/It.4.php","/sutta/It.5.php","/sutta/It.6.php","/sutta/It.7.php","/sutta/It.8.php","/sutta/It.9.php","/sutta/It.10.php","/sutta/It.11.php","/sutta/It.12.php","/sutta/It.13.php","/sutta/It.14.php","/sutta/It.15.php","/sutta/It.16.php","/sutta/It.17.php","/sutta/It.18.php","/sutta/It.19.php","/sutta/It.20.php","/sutta/It.21.php","/sutta/It.22.php","/sutta/It.23.php","/sutta/It.24.php","/sutta/It.25.php","/sutta/It.26.php","/sutta/It.27.php","/sutta/It.28.php","/sutta/It.29.php","/sutta/It.30.php","/sutta/It.31.php","/sutta/It.32.php","/sutta/It.33.php","/sutta/It.34.php","/sutta/It.35.php","/sutta/It.36.php","/sutta/It.37.php","/sutta/It.38.php","/sutta/It.39.php","/sutta/It.40.php","/sutta/It.41.php","/sutta/It.42.php","/sutta/It.43.php","/sutta/It.44.php","/sutta/It.45.php","/sutta/It.46.php","/sutta/It.47.php","/sutta/It.48.php","/sutta/It.49.php","/sutta/It.50.php","/sutta/It.51.php","/sutta/It.52.php","/sutta/It.53.php","/sutta/It.54.php","/sutta/It.55.php","/sutta/It.56.php","/sutta/It.57.php","/sutta/It.58.php","/sutta/It.59.php","/sutta/It.60.php","/sutta/It.61.php","/sutta/It.62.php","/sutta/It.63.php","/sutta/It.64.php","/sutta/It.65.php","/sutta/It.66.php","/sutta/It.67.php","/sutta/It.68.php","/sutta/It.69.php","/sutta/It.70.php","/sutta/It.71.php","/sutta/It.72.php","/sutta/It.73.php","/sutta/It.74.php","/sutta/It.75.php","/sutta/It.76.php","/sutta/It.77.php","/sutta/It.78.php","/sutta/It.79.php","/sutta/It.80.php","/sutta/It.81.php","/sutta/It.82.php","/sutta/It.83.php","/sutta/It.84.php","/sutta/It.85.php","/sutta/It.86.php","/sutta/It.87.php","/sutta/It.88.php","/sutta/It.89.php","/sutta/It.90.php","/sutta/It.91.php","/sutta/It.92.php","/sutta/It.93.php","/sutta/It.94.php","/sutta/It.95.php","/sutta/It.96.php","/sutta/It.97.php","/sutta/It.98.php","/sutta/It.99.php","/sutta/It.100.php","/sutta/It.101.php","/sutta/It.102.php","/sutta/It.103.php","/sutta/It.104.php","/sutta/It.105.php","/sutta/It.106.php","/sutta/It.107.php","/sutta/It.108.php","/sutta/It.109.php","/sutta/It.110.php","/sutta/It.111.php","/sutta/It.112.php");
+function suttaAleatorio(){
+ aleat = Math.random() * enderecos.length;
+ aleat = Math.floor(aleat);
+ window.location= enderecoBase + enderecos[aleat];
+}
+</script>
+</head>
+<body><input id="php-var-pagina" type="hidden" value="ANIV45 " /><div class="container fullwidth">
+<a name=Top></a>   <div id="principal">
+      <div class="imagem-topo" style="background-image: url('../img/topo/new.jpg');"></div>			<nav class="navbar navbar-inverse menu-bootstrap" style="margin-bottom: 0px;">				<div class="container-fluid">					<div class="navbar-header">						<button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#menu-responsivo" aria-expanded="false">							<span class="sr-only">Toggle navigation</span>							<span class="icon-bar"></span>							<span class="icon-bar"></span>							<span class="icon-bar"></span>						</button>					</div>					<div class="collapse navbar-collapse" id="menu-responsivo">						<ul class="nav navbar-nav">							<li><a href="../index.htm">									<span class="glyphicon glyphicon-home" style="font-size:15px;" title="Home"></span>									<span class="visible-xs-inline"> Home</span>							</a></li>							<li id="menu_sala_estudos"><a href="../sala_estudos.php.html">Sala Estudos</a></li>							<li id="menu_sutta_pitaka"><a href="../sutta_pitaka.php.html">Sutta Pitaka</a></li>							<li id="menu_indice">								<a class="dropdown-toggle" data-toggle="dropdown" href="ANIV.45.php.html#">Indice								<span class="caret"></span></a>								<ul class="dropdown-menu">									<li><a href="indice_suttas.php.html">Indice Suttas</a></li>									<li><a href="../arquivo_textos_theravada/indice_textos.php.html">Indice Textos</a></li>								</ul>							</li>							<li id="menu_material">								<a class="dropdown-toggle" data-toggle="dropdown" href="ANIV.45.php.html#">Materiais								<span class="caret"></span></a>								<ul class="dropdown-menu">									<li><a href="../livros.php.html">Livros</a></li>									<li><a href="../audiobook.php.html">Audiobook</a></li>									<li><a href="../podcast.php.html">Podcast</a></li>								</ul>							</li>							<li id="menu_random">								<a class="dropdown-toggle" data-toggle="dropdown" href="ANIV.45.php.html#">Random								<span class="caret"></span></a>								<ul class="dropdown-menu">									<li><a href="javascript:dhpAleatorio();">DHP Random</a></li>									<li><a href="javascript:suttaAleatorio();">Sutta Random</a></li>								</ul>							</li>							<li id="menu_ajuda"><a href="../ajuda.php.html">								<span class="glyphicon glyphicon-question-sign" style="font-size:15px;" title="Ajuda"></span>								<span class="visible-xs-inline"> Ajuda</span>							</a></li>						</ul>					</div>				</div>			</nav>			      <div id="central">
+<!-- INICIO DO TEXTO -->
+
+
+<p class=Tit3 align=center style='text-align:center'><b>Anguttara Nikaya IV.45 </b></Tit3>
+<p class=Tit1 align=center style='text-align:center'> Rohitassa Sutta </Tit1>
+<p class=Tit1 align=center style='text-align:center'> Rohitassa </Tit1>
+
+<p class=Normal align=center style='text-align:center'><span lang=PT-BR style='font-size:
+7.0pt;mso-ansi-language:PT-BR'><b> Somente para distribuição gratuita.</b><br>
+<i>Este trabalho pode ser impresso para distribuição gratuita.<br>
+Este trabalho pode ser re-formatado e distribuído para uso em computadores e redes de computadores<br>
+contanto que nenhum custo seja cobrado pela distribuição ou uso.<br>
+De outra forma todos os direitos estão reservados. </i> <o:p></o:p></span></p>
+
+<p class=Normal>&nbsp;</p>
+
+<hr size=2 width="100%" align=center>
+
+<p class=Normal style='margin-left:.75in'> 
+
+<p class=Normal> Em certa ocasião o Abençoado estava em Savathi no Bosque de Jeta, no Parque de Anathapindika. Então, quando a noite estava bem avançada, o jovem deva Rohitassa, com belíssima aparência, que iluminou todo o Bosque de Jeta, se aproximou do Abençoado. Ao se aproximar ele homenageou o Abençoado e ficando em pé a um lado disse: </p>
+
+<p class=Normal> “É possível, venerável senhor, através de viagens conhecer ou ver, ou chegar ao fim do mundo, onde a pessoa não nasce, não envelhece, não morre, não falece e não renasce?” </p>
+
+<p class=Normal> “Quanto a esse fim do mundo, amigo, onde a pessoa não nasce, não envelhece, não morre, não falece e não renasce – eu digo que não pode ser conhecido ou visto viajando.” </p>
+
+<p class=Normal> “É maravilhoso, venerável senhor! É admirável, venerável senhor! Quão bem isso foi afirmado pelo Abençoado: ‘Quanto a esse fim do mundo, amigo, ... eu digo que não pode ser conhecido ou visto viajando.’ </p>
+
+<p class=Normal> “Uma vez no passado, venerável senhor, eu fui um vidente chamado Rohitassa, filho de Bhoja, possuindo poderes supra-humanos, capaz de viajar através do céu. Minha velocidade era tal, venerável senhor, que eu podia me mover tão rápido quanto uma flecha de luz que atravessasse a sombra de uma palmeira atirada por um arqueiro bem treinado, habilidoso, experimentado. Meu passo era tal, venerável senhor, que parecia alcançar do oceano do leste ao oceano do oeste. Então, venerável senhor, o desejo surgiu em mim: ‘Eu alcançarei o fim do mundo viajando.’ Possuindo tamanha velocidade e tamanho passo, e tendo um tempo de vida de cem anos, vivendo por cem anos, eu viajei por cem anos, sem pausa exceto para comer, beber, defecar, urinar e dissipar a fadiga; no entanto, eu morri no meio do caminho sem ter chegado ao fim do mundo. </p>
+
+<p class=Normal> “É maravilhoso, venerável senhor! É admirável, venerável senhor! Quão bem isso foi afirmado pelo Abençoado: ‘Quanto a esse fim do mundo, amigo, onde a pessoa não nasce, não envelhece, não morre, não falece e não renasce – eu digo que não pode ser conhecido ou visto viajando.’” </p>
+
+<p class=Normal> “No entanto, amigo, eu digo que sem ter alcançado o fim do mundo não há como dar um fim ao sofrimento. Amigo, é exatamente nesta carcaça com uma braça de comprimento, dotada de percepção e mente, que eu revelo o mundo, a origem do mundo, a cessação do mundo e o caminho que conduz à cessação do mundo." </p>
+
+<p class=Normal> O fim do mundo nunca poderá ser alcançado<br>
+por meio de viagens [pelo mundo], <br>
+no entanto, sem chegar ao fim do mundo <br>
+não há libertação do sofrimento. </p>
+
+<p class=Normal> Por conseguinte, o conhecedor do mundo, aquele que é sábio, <br>
+que chegou ao fim do mundo, realizou a vida santa, <br>
+depois de conhecer o fim do mundo, em paz, <br>
+não anseia por este mundo e outro tampouco.</p>
+
+<p class=Normal>&nbsp;</p>
+
+<hr size=2 width="100%" align=center>
+
+<p class=Normal style='margin-left:.75in'> 
+
+
+<p class=Normal><b>Notas:</b></p>
+
+<p class=Normal>Veja também o <a href="SNII.26.php.html">SN II.26</a>.</p>
+
+<p class=Normal><a href="ANIV.49.php.html"><b> >> Próximo Sutta</b></a></p>
+<p class=Normal>&nbsp;</p>
+<p class=Normal>&nbsp;</p>
+
+
+<!-- FIM DO TEXTO -->
+
+<!-- INCLUI BASE -->
+<!-- BASE DE TODAS AS Pï¿½GINAS -->
+
+     </div>
+
+     <div id="rodape">
+     <span style="float:right;">
+         <p class=Rodape>
+         Revisado: 2 Março 2013          </p>
+     </span>
+     </div>
+
+     <div id="institucional">
+         <p class=Institucional>
+         Copyright &copy; 2000 - 2021,
+         <a href="../index.html">Acesso ao Insight</a> -
+         Michael Beisert: editor, Flavio Maia: designer.</p>
+     </div>
+
+     <div id="powered">
+         
+            <br><br>
+         <span>
+     </div>
+  </div>
+</body>
+</html>
+
+
