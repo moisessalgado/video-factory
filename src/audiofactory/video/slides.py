@@ -34,11 +34,41 @@ CRUZAMENTO = 2.0
 # Veu inferior sob a legenda queimada. O `gradiente` que este preset substitui
 # era escuro por baixo do texto de graca; arte clara nao e, e "Nobre Caminho
 # Octuplo" em branco sobre um lotus vermelho vive do contorno de 1 px. O veu
-# devolve o contraste sem escurecer a imagem toda -- 300 px cobrem as duas
-# linhas de legenda (MarginV=20 do .srt cai a ~75 px do rodape) e param bem
-# abaixo do centro da composicao.
-VEU_ALTURA = 300
-VEU_OPACIDADE = 0.7
+# devolve o contraste sem escurecer a imagem toda -- ele cobre as duas linhas de
+# legenda (MarginV=20 do .srt cai a ~75 px do rodape) e para bem abaixo do
+# centro da composicao.
+#
+# 420 px e nao 300: a altura aqui nao e a do texto, e a do DISFARCE. Um veu
+# curto tem de escurecer depressa para dar contraste no rodape, e a rampa curta
+# e justamente o que o olho le como borda -- a faixa aparece como objeto
+# desenhado sobre a arte. Esticando a rampa, o mesmo escurecimento no pe do
+# quadro chega tao devagar que nao ha onde o olho fixar o comeco dela.
+VEU_ALTURA = 420
+
+# Opacidade no PE do quadro, onde a legenda esta. No topo do veu e sempre zero.
+VEU_OPACIDADE = 0.85
+
+# Expoente da rampa. Linear (1.0) distribui o escurecimento por igual e ainda
+# deixa o topo do veu perceptivel; com 2,4 a metade de cima fica praticamente
+# transparente (a 50% da altura o veu esta em 16% da opacidade) e quase todo o
+# escurecimento se concentra nas duas linhas de legenda, que sao o motivo dele.
+VEU_CURVA = 2.4
+
+# O veu e ESTATICO. Antes ele vinha de um `gradients`, que anima por padrao (a
+# cor circula em `speed`), e o rodape pulsava a noite toda -- movimento sem
+# motivo, exatamente o que o resto do modulo evita. Aqui o `geq` desenha a rampa
+# UMA vez (`trim=end_frame=1`) e o `loop` repete aquele quadro: alem de nao
+# animar, o custo por quadro cai a zero, e `geq` sobre 1920x420 pixels em 16 mil
+# quadros nao e barato.
+
+# Resolucao em que o borrao de fundo e calculado, e o sigma nela. O par importa
+# junto: sigma 15 em 480x270 cobre o mesmo raio, em fracao do quadro, que sigma
+# 6 cobria em 192x108 -- o borrao tem a mesma cara, so que sem os degraus.
+BORRAO_L, BORRAO_A = 480, 270
+BORRAO_SIGMA = 15
+
+# Profundidade de trabalho do grafo. Ver `filtro` para o porque.
+PROFUNDIDADE = "gbrp10le"
 
 # O video precisa sobrar sobre o audio: `-t` por imagem cai na grade de quadros
 # e o arredondamento, somado em doze slides, pode deixar o video mais curto que
@@ -108,23 +138,39 @@ def plano(duracao: float, diretorio: Path = DIRETORIO_PADRAO,
     return sortear(acervo, n, seed), cada, cruzamento
 
 
+def veu_lavfi(fps: int, largura: int) -> str:
+    """Fonte lavfi do veu: preto com alfa em rampa, desenhado uma unica vez.
+
+    O `geq` custa uma passada por pixel, entao ele roda no primeiro quadro e
+    para: `trim=end_frame=1` corta o resto e `loop` devolve aquele quadro para
+    sempre. O `setpts` reconstroi os tempos, que o `loop` repete junto com a
+    imagem -- sem ele o overlay recebe dezesseis mil quadros com PTS 0.
+
+    A rampa vai de alfa 0 no topo a `VEU_OPACIDADE` no pe, com expoente
+    `VEU_CURVA`. `rgba64le` (16 bits por canal) em vez de `rgba`: com o
+    expoente 2,4 os primeiros ~90 px de altura mapeiam para alfa 0-3 em 8
+    bits, e cada um desses valores cobre uma dezena de linhas -- um degrau
+    real sobre fundo escuro, medido como listras horizontais na tarja
+    esquerda/direita renderizada (era este o defeito relatado, nao a imagem
+    de origem). Em 16 bits a rampa fica fina o bastante para o dither final
+    do `render.py` (SAIDA_8BITS) espalhar o arredondamento em vez de deixar o
+    degrau inteiro.
+    """
+    alfa = f"65535*{VEU_OPACIDADE}*pow(Y/H\\,{VEU_CURVA})"
+    return (f"color=c=black:s={largura}x{VEU_ALTURA}:r={fps},format=rgba64le,"
+            f"geq=r=0:g=0:b=0:a='{alfa}',"
+            f"trim=end_frame=1,loop=loop=-1:size=1:start=0,setpts=N/{fps}/TB")
+
+
 def entradas(imagens: list[Path], cada: float, fps: int, largura: int,
              veu: bool) -> list[str]:
-    """Argumentos de entrada do ffmpeg: um bloco por imagem, mais o veu.
-
-    `x0/y0/x1/y1` NAO sao decorativos: sem eles o `gradients` desenha na
-    diagonal, e uma coluna do quadro sai com opacidade constante -- o veu
-    viraria uma faixa chapada com borda dura no topo.
-    """
+    """Argumentos de entrada do ffmpeg: um bloco por imagem, mais o veu."""
     args: list[str] = []
     for img in imagens:
         args += ["-loop", "1", "-framerate", str(fps), "-t", f"{cada:.3f}",
                  "-i", str(img)]
     if veu:
-        args += ["-f", "lavfi", "-i",
-                 f"gradients=s={largura}x{VEU_ALTURA}:c0=black@0.0:"
-                 f"c1=black@{VEU_OPACIDADE}:x0=0:y0=0:x1=0:y1={VEU_ALTURA}:"
-                 f"nb_colors=2:r={fps}"]
+        args += ["-f", "lavfi", "-i", veu_lavfi(fps, largura)]
     return args
 
 
@@ -137,18 +183,30 @@ def filtro(imagens: list[Path], cada: float, cruzamento: float,
     entra inteira e o resto do quadro recebe ela mesma, ampliada, desfocada e
     escurecida -- o mesmo material, sem borda preta e sem competir com a arte.
 
-    O desfoque e feito em 192x108 e so depois esticado: `gblur` com sigma alto
-    em 1080p custa caro em TODO quadro de um still parado 45 s, e o resultado
+    O desfoque e feito pequeno e so depois esticado: `gblur` com sigma alto em
+    1080p custa caro em TODO quadro de um still parado 45 s, e o resultado
     ampliado e indistinguivel.
+
+    Mas nao TAO pequeno: em 192x108 um pixel do borrao virava um bloco de 10x10
+    na tela, e o degrade que sobra tem passos largos demais para o `scale`
+    interpolar -- eram essas as listras de cor que apareciam nas tarjas laterais.
+    Em 480x270 o passo cai para 4 px e o borrao ainda sai de graca.
+
+    A outra metade do conserto e `PROFUNDIDADE`: o borrao e uma rampa quase
+    plana, e rampa plana em 8 bits BANDEIA por aritmetica, antes de qualquer
+    codec. Em 10 bits ha degraus de sobra, e o `render` os despeja em 8 com
+    difusao de erro no fim da cadeia.
     """
     partes: list[str] = []
     for i in range(len(imagens)):
         partes.append(
             f"[{i}:v]split=2[c{i}][f{i}];"
             f"[c{i}]scale={largura}:{altura}:force_original_aspect_ratio=increase,"
-            f"crop={largura}:{altura},scale=192:108,gblur=sigma=6,"
+            f"crop={largura}:{altura},scale={BORRAO_L}:{BORRAO_A},"
+            f"format={PROFUNDIDADE},gblur=sigma={BORRAO_SIGMA},"
             f"scale={largura}:{altura},eq=brightness=-0.18:saturation=0.5[b{i}];"
-            f"[f{i}]scale={largura}:{altura}:force_original_aspect_ratio=decrease[g{i}];"
+            f"[f{i}]scale={largura}:{altura}:force_original_aspect_ratio=decrease,"
+            f"format={PROFUNDIDADE}[g{i}];"
             f"[b{i}][g{i}]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1[s{i}]")
     anterior = "[s0]"
     for k in range(1, len(imagens)):

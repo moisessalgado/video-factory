@@ -188,3 +188,79 @@ def test_acervo_local_serve_para_um_capitulo():
     if not acervo:
         pytest.skip(f"sem acervo em {slides.DIRETORIO_PADRAO} (não versionado)")
     assert len(acervo) >= slides.quantas(20 * 60)
+
+
+def _quadro(mp4: Path, t: float, destino: Path) -> Path:
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", str(t),
+         "-i", str(mp4), "-frames:v", "1", str(destino)], check=True)
+    return destino
+
+
+def test_veu_nao_anima(acervo, tmp_path):
+    """O véu tem de ser a MESMA imagem do começo ao fim do slide.
+
+    Ele nasceu de um `gradients`, que anima por padrão: a cor circula em `speed`
+    e o rodapé pulsa a noite toda. O teste compara dois instantes distantes
+    DENTRO do mesmo slide — 8 s de áudio dão um slide só, então não há dissolve
+    para confundir o resultado — e exige que o pé do quadro não tenha mudado."""
+    audio = tmp_path / "a.wav"
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=f=220:d=8", str(audio)], check=True)
+    srt = tmp_path / "s.srt"
+    srt.write_text("1\n00:00:00,500 --> 00:00:07,500\nlinha fixa\n\n")
+    mp4 = renderizar(audio, tmp_path / "v.mp4", preset="slides", gpu=False,
+                     slides_dir=acervo, slides_seg=8.0, slides_seed=5,
+                     legenda=srt)
+    a, b = (_quadro(mp4, t, tmp_path / f"q{t}.png") for t in (1.0, 6.0))
+    # a legenda é a mesma nos dois instantes, então qualquer diferença no rodapé
+    # é do véu (ou do codificador, daí a folga de 1 nível)
+    pe = ALTURA - 100
+    assert abs(_luminancia(a, pe) - _luminancia(b, pe)) <= 1
+
+
+def test_veu_desaparece_antes_do_meio(acervo, tmp_path):
+    """A rampa do véu tem de chegar ao topo dele já invisível.
+
+    O véu antigo tinha 300 px e escurecia depressa: a borda de cima aparecia
+    como uma faixa desenhada sobre a arte. O conserto foi esticar a rampa e
+    curvá-la, e o que garante isso é o formato do degradê — escuro no pé,
+    imperceptível onde ele começa."""
+    audio = tmp_path / "a.wav"
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=f=220:d=8", str(audio)], check=True)
+    srt = tmp_path / "s.srt"
+    srt.write_text("1\n00:00:00,500 --> 00:00:07,500\nlinha fixa\n\n")
+    quadros = {}
+    for rotulo, leg in (("sem", None), ("com", srt)):
+        mp4 = renderizar(audio, tmp_path / f"{rotulo}.mp4", preset="slides",
+                         gpu=False, slides_dir=acervo, slides_seg=8.0,
+                         slides_seed=5, legenda=leg)
+        quadros[rotulo] = _quadro(mp4, 4.0, tmp_path / f"{rotulo}.png")
+
+    topo = ALTURA - slides.VEU_ALTURA + 10       # logo abaixo da borda do véu
+    pe = ALTURA - 40                             # onde a legenda mora
+    escuro = lambda y: (_luminancia(quadros["sem"], y)
+                        - _luminancia(quadros["com"], y))
+    assert escuro(topo) <= 3, "a borda de cima do véu está visível"
+    assert escuro(pe) > 20, "o véu não está dando contraste para a legenda"
+
+
+def test_saida_em_faixa_limitada_bt709(acervo, tmp_path):
+    """O MP4 saía como `yuvj420p` — faixa cheia, só marcada, nunca convertida.
+
+    Player que ignora a marca (não são poucos) esmagava preto e branco. A cadeia
+    agora converte de verdade e escreve as flags de cor no arquivo."""
+    audio = tmp_path / "a.wav"
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=f=220:d=6", str(audio)], check=True)
+    mp4 = renderizar(audio, tmp_path / "v.mp4", preset="slides", gpu=False,
+                     slides_dir=acervo, slides_seg=6.0, slides_seed=2)
+    campos = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=pix_fmt,color_range,color_space", "-of", "csv=p=0", str(mp4)],
+        capture_output=True, text=True, check=True).stdout.strip()
+    assert campos == "yuv420p,tv,bt709"

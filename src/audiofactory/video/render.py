@@ -19,6 +19,43 @@ from . import slides as slides_mod
 # 1080p a 25 fps: o YouTube reencoda tudo, e mais resolucao so aumenta o upload.
 LARGURA, ALTURA, FPS = 1920, 1080, 25
 
+# Qualidade do NVENC. O `cq 31` que estava aqui rendia 380 kb/s em 1080p, e o
+# codificador gastava esse orcamento onde havia detalhe -- as tarjas borradas,
+# que sao quase planas, sobravam com blocos inteiros no mesmo valor e viravam
+# listras de cor. `cq 20` custa ~3x o arquivo (46 MB viram ~150 MB em onze
+# minutos, irrelevante num upload unico) e devolve a rampa.
+#
+# `spatial-aq` existe exatamente para este material: ele reparte o orcamento a
+# favor das areas LISAS, que e onde o olho enxerga banda, e nao a favor do
+# detalhe, que e onde o codificador iria sozinho.
+CQ = 20
+NVENC = ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq",
+         "-rc", "vbr", "-cq", str(CQ), "-b:v", "0",
+         "-maxrate", "16M", "-bufsize", "32M",
+         "-spatial-aq", "1", "-aq-strength", "8",
+         "-bf", "3", "-rc-lookahead", "32", "-profile:v", "high"]
+X264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+
+# Ultimo elo do grafo, comum a todos os presets: derruba a cadeia de 10 bits
+# para os 8 do H.264 com difusao de erro. Sem o `dither`, a conversao arredonda
+# e as bandas que os 10 bits evitaram voltam inteiras no ultimo passo.
+#
+# O `matrix`/`range` nao sao enfeite: o JPEG entra em faixa cheia, e sair sem
+# converter marcava o MP4 como `yuvj420p`. Player que ignora a marca (nao sao
+# poucos) esmagava preto e branco. Aqui a conversao e explicita e a marca,
+# escrita no arquivo pelas flags de cor do ffmpeg.
+#
+# O `format=gbrp10le` da frente nao e redundancia com os slides (que ja chegam
+# assim): ele existe para os OUTROS presets. O `zscale` recusa converter a
+# partir de um quadro cuja matriz nao esta marcada -- e o `espectro`, que sai de
+# um `blend`, e exatamente um desses ("no path between colorspaces"). Passando
+# por RGB primeiro, nao ha matriz de entrada para adivinhar.
+SAIDA_8BITS = ("format=gbrp10le,"
+               "zscale=matrix=709:range=limited:dither=error_diffusion,"
+               "format=yuv420p")
+CORES = ["-colorspace", "bt709", "-color_primaries", "bt709",
+         "-color_trc", "bt709", "-color_range", "tv"]
+
 # Paleta escura de proposito: video claro por uma hora cansa, e tela escura gasta
 # menos bateria em OLED, que e onde a maioria ouve.
 FUNDO_A = "0x0d1b2a"
@@ -66,8 +103,11 @@ def _sobreposicao(preset: str, capa: Path | None, i_audio: int,
         imagens, cada, cruzamento = plano
         return slides_mod.filtro(imagens, cada, cruzamento, LARGURA, ALTURA, veu)
     if preset in ("estatico", "gradiente"):
-        return f"[0:v]scale={LARGURA}:{ALTURA}:force_original_aspect_ratio=increase," \
-               f"crop={LARGURA}:{ALTURA},setsar=1[v]"
+        # 10 bits aqui pelo mesmo motivo dos slides: o `gradiente` e uma rampa
+        # de canto a canto, o pior caso possivel para banda em 8 bits.
+        return (f"[0:v]scale={LARGURA}:{ALTURA}:force_original_aspect_ratio=increase,"
+                f"crop={LARGURA}:{ALTURA},"
+                f"format={slides_mod.PROFUNDIDADE},setsar=1[v]")
     if preset == "espectro":
         # `axis=0` e obrigatorio: por padrao o showcqt desenha a regua de notas
         # (A B C D E F G) sobre a imagem, o que num audiolivro nao faz sentido
@@ -144,14 +184,18 @@ def renderizar(audio: Path, destino: Path, preset: str = "slides",
         filtro += (f";[vbase]subtitles='{_escapar(legenda)}'"
                    f":force_style='{ESTILO_LEGENDA}'[v]")
 
-    video = (["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "31"] if gpu else
-             ["-c:v", "libx264", "-preset", "medium", "-crf", "23"])
+    # O despejo para 8 bits e o ULTIMO elo, depois ate da legenda: feito antes,
+    # o `subtitles` receberia 8 bits e o resto do grafo perderia a precisao que
+    # os 10 bits existem para dar.
+    filtro = filtro.replace("[v]", "[v10]") + f";[v10]{SAIDA_8BITS}[v]"
+
+    video = NVENC if gpu else X264
     destino.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
          *entrada_fundo, "-i", str(audio),
          "-filter_complex", filtro, "-map", "[v]", "-map", f"{n_video}:a",
-         *video, "-pix_fmt", "yuv420p",
+         *video, *CORES, "-pix_fmt", "yuv420p",
          # faststart poe o indice no inicio: o YouTube processa antes de terminar
          # o upload, e um player web consegue comecar sem baixar tudo
          "-movflags", "+faststart",
